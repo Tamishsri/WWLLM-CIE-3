@@ -1,0 +1,53 @@
+# WWLLM — Multilingual Lecture-to-Notes & Quiz Generator
+
+## Byte-compiled / optimised
+__pycache__/
+*.py[cod]
+*$py.class
+
+## Virtual environments
+.venv/
+venv/
+env/
+
+## IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+## OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+## ML model caches (large)
+*.nemo
+*.ckpt
+*.bin
+*.safetensors
+*.pt
+!requirements.txt
+
+## HuggingFace cache
+.cache/
+
+## Data & outputs (keep structure, ignore temporary uploads)
+data/uploads/*
+!data/uploads/.gitkeep
+outputs/notes/*
+!outputs/notes/.gitkeep
+outputs/quizzes/*
+!outputs/quizzes/.gitkeep
+!outputs/evaluations/failure_analysis.csv
+!outputs/transcripts/predictions.json
+!outputs/transcripts/eval_inputs.json
+
+## Logs
+*.log
+
+## Temporary files
+tmp/
+temp/
+*.tmp

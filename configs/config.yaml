@@ -1,0 +1,38 @@
+# ============================================================================
+# WWLLM — Application Configuration
+# ============================================================================
+# This YAML is loaded by app.py at startup.  Override values by setting
+# environment variables prefixed with WWLLM_ (e.g. WWLLM_ASR_BATCH_SIZE=4).
+
+app:
+  title: "WWLLM — Multilingual Lecture-to-Notes & Quiz Generator"
+  version: "1.0.0"
+
+asr:
+  model_id: "ai4bharat/indicconformer_stt_hi_hybrid_rnnt_large"
+  batch_size: 8
+  device: null  # auto-detect
+
+llm:
+  model_id: "bharatgenai/Param-1-2.9B-Instruct"
+  quantize_8bit: true
+  temperature: 0.4
+  max_new_tokens_notes: 2048
+  max_new_tokens_quiz: 2048
+
+translation:
+  model_id: "ai4bharat/indictrans2-en-indic-1B"
+  num_beams: 5
+  default_target: "hin_Deva"
+
+audio:
+  max_chunk_sec: 25.0
+  min_chunk_sec: 2.0
+  vad_threshold: 0.45
+  min_silence_ms: 300
+
+evaluation:
+  wer_threshold: 0.30
+  bertscore_threshold: 0.70
+  bert_model: "bert-base-multilingual-cased"
+  output_dir: "outputs/evaluations"

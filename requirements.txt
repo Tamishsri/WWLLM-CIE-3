@@ -1,0 +1,47 @@
+# ============================================================================
+# WWLLM — Multilingual Lecture-to-Notes & Quiz Generator
+# Python 3.10+  |  CUDA 11.8+ recommended
+# ============================================================================
+
+# ── Core ML Frameworks ──────────────────────────────────────────────────────
+torch>=2.1.0
+torchaudio>=2.1.0
+transformers>=4.40.0
+accelerate>=0.30.0
+sentencepiece>=0.2.0
+protobuf>=4.25.0
+
+# ── Quantisation ────────────────────────────────────────────────────────────
+bitsandbytes>=0.43.0
+
+# ── NVIDIA NeMo (AI4Bharat IndicConformer) ──────────────────────────────────
+# NOTE: Install AI4Bharat's NeMo fork for IndicConformer support:
+#   git clone --branch nemo-v2 https://github.com/AI4Bharat/NeMo.git
+#   cd NeMo && bash reinstall.sh
+nemo_toolkit[asr]>=1.23.0
+
+# ── AI4Bharat IndicTrans2 Toolkit ───────────────────────────────────────────
+# pip install git+https://github.com/VarunGumma/IndicTransToolkit.git
+IndicTransToolkit>=0.1.0
+
+# ── Voice Activity Detection ───────────────────────────────────────────────
+silero-vad>=5.1
+
+# ── Audio / Video Processing ───────────────────────────────────────────────
+pydub>=0.25.1
+ffmpeg-python>=0.2.0
+
+# ── Evaluation Metrics ─────────────────────────────────────────────────────
+jiwer>=3.0.0
+bert-score>=0.3.13
+rouge-score>=0.1.2
+
+# ── Frontend ────────────────────────────────────────────────────────────────
+streamlit>=1.35.0
+
+# ── Utilities ───────────────────────────────────────────────────────────────
+pandas>=2.2.0
+numpy>=1.26.0
+pyyaml>=6.0
+loguru>=0.7.0
+tqdm>=4.66.0
