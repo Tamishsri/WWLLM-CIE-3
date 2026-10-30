@@ -12,7 +12,9 @@ Usage::
         --predictions  outputs/transcripts/predictions.json \\
         --output-dir   outputs/evaluations
 
-The predictions JSON should be a mapping of ``{audio_file: transcript}``.
+The predictions JSON is a mapping of ``{audio_file: transcript}``, or the richer
+``{"predictions", "summaries_pred", "summaries_ref"}`` format, which also scores
+the summaries with ROUGE and BERTScore.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.pipelines.eval_pipeline import EvalPipeline
+from src.services.benchmark import parse_predictions
 
 
 def main() -> None:
@@ -52,13 +55,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    predictions = None
+    predictions, summaries_pred, summaries_ref = {}, {}, {}
     if args.predictions:
         with open(args.predictions, "r", encoding="utf-8") as f:
-            predictions = json.load(f)
+            predictions, summaries_pred, summaries_ref = parse_predictions(json.load(f))
 
     evaluator = EvalPipeline(output_dir=args.output_dir)
-    results = evaluator.run(args.ground_truth, predictions=predictions)
+    results = evaluator.run(
+        args.ground_truth,
+        predictions=predictions,
+        summaries_pred=summaries_pred,
+        summaries_ref=summaries_ref,
+    )
 
     df = evaluator.generate_report_df(results)
     print("\n" + "=" * 70)

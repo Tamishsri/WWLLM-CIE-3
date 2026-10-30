@@ -48,8 +48,9 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 import torch
-import torchaudio
 from loguru import logger
+
+from src.pipelines.audio_utils import write_wav
 
 # ---------------------------------------------------------------------------
 # NeMo import — guarded so the rest of the codebase remains importable even
@@ -231,12 +232,10 @@ class ASREngine:
                 tmp = tempfile.NamedTemporaryFile(
                     suffix=".wav", delete=False, prefix=f"asr_chunk_{idx}_"
                 )
-                # Ensure [1, T] shape for torchaudio.save
-                wav = chunk.unsqueeze(0) if chunk.dim() == 1 else chunk
-                torchaudio.save(tmp.name, wav.cpu(), SAMPLE_RATE)
+                tmp.close()  # Windows can't reopen a file that is still open
+                write_wav(tmp.name, chunk, SAMPLE_RATE)
                 tmp_paths.append(tmp.name)
                 valid_indices.append(idx)
-                tmp.close()
             except Exception as exc:
                 logger.warning(f"Could not write chunk {idx} to WAV: {exc}")
 

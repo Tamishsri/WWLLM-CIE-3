@@ -1,9 +1,9 @@
 """
 translator.py — AI4Bharat IndicTrans2 Translation Pipeline
 ==========================================================
-Translates English text (Markdown notes and JSON MCQs) into Hindi,
-Tamil, or Kannada using the ``ai4bharat/indictrans2-en-indic-1B``
-seq2seq model.
+Translates English text (Markdown notes and JSON MCQs) into Indian
+languages (Hindi, Tamil, Kannada, Telugu, Bengali, ...) using the
+``ai4bharat/indictrans2-en-indic-1B`` seq2seq model.
 
 This module uses the **IndicTransToolkit** preprocessor for script-
 aware tokenisation and post-processing, which is required for correct
@@ -23,10 +23,14 @@ from __future__ import annotations
 
 import json
 import re
+from contextlib import nullcontext
 from typing import Any, Dict, List, Optional
 
 import torch
 from loguru import logger
+
+# Friendly name → FLORES-200 code (shared with the UI, re-exported here)
+from src.pipelines.languages import SUPPORTED_TARGETS
 
 try:
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
@@ -50,14 +54,6 @@ DEFAULT_TRANS_MODEL: str = "ai4bharat/indictrans2-en-indic-1B"
 
 SRC_LANG: str = "eng_Latn"
 """FLORES-200 source language code (English, Latin script)."""
-
-# Mapping from user-friendly names to FLORES-200 codes
-SUPPORTED_TARGETS: Dict[str, str] = {
-    "Hindi": "hin_Deva",
-    "Tamil": "tam_Taml",
-    "Kannada": "kan_Knda",
-}
-"""Supported target languages and their FLORES-200 codes."""
 
 MAX_SEQ_LEN: int = 256
 """Maximum token sequence length per translation batch element."""
@@ -158,7 +154,10 @@ class TranslationEngine:
         for idx, line in enumerate(lines):
             stripped = line.strip()
             if stripped and not self._is_markdown_only(stripped):
-                non_empty.append((idx, stripped))
+                # The prefix ("## ", "- ") is re-attached after translation.
+                body = line[len(self._extract_md_prefix(line)):].strip()
+                if body:
+                    non_empty.append((idx, body))
 
         # ── Batch translate ─────────────────────────────────────────────
         source_texts = [t for _, t in non_empty]
@@ -207,9 +206,15 @@ class TranslationEngine:
                 self._translate_single(opt, target_lang)
                 for opt in q.get("options", [])
             ]
-            tq["correct_answer"] = self._translate_single(
-                q.get("correct_answer", ""), target_lang
-            )
+            idx = q.get("answer_index")
+            if isinstance(idx, int) and 0 <= idx < len(tq["options"]):
+                # Re-use the translated option so the key always matches it.
+                tq["answer_index"] = idx
+                tq["correct_answer"] = tq["options"][idx]
+            else:
+                tq["correct_answer"] = self._translate_single(
+                    q.get("correct_answer", ""), target_lang
+                )
             tq["explanation"] = self._translate_single(
                 q.get("explanation", ""), target_lang
             )
@@ -263,7 +268,10 @@ class TranslationEngine:
                     max_length=MAX_SEQ_LEN,
                 )
 
-            with self.tokenizer.as_target_tokenizer():
+            # Removed from transformers' base tokenizer in v5; keep using it
+            # where a custom tokenizer still provides it.
+            target_mode = getattr(self.tokenizer, "as_target_tokenizer", nullcontext)
+            with target_mode():
                 decoded = self.tokenizer.batch_decode(
                     generated, skip_special_tokens=True, clean_up_tokenization_spaces=True
                 )

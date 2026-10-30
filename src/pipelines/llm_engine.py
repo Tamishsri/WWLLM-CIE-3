@@ -19,6 +19,8 @@ Usage::
 
     engine = LLMEngine()
     notes_md = engine.generate_notes(transcript)
+    for piece in engine.stream_notes(transcript):   # token streaming for UIs
+        print(piece, end="")
     quiz_json = engine.generate_quiz(transcript, num_questions=5)
 """
 
@@ -26,16 +28,20 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Optional
+from threading import Thread
+from typing import Any, Dict, Iterator, List, Optional
 
 import torch
 from loguru import logger
+
+from src.pipelines.quiz_schema import normalise_quiz
 
 try:
     from transformers import (
         AutoModelForCausalLM,
         AutoTokenizer,
         BitsAndBytesConfig,
+        TextIteratorStreamer,
     )
 
     _TRANSFORMERS_AVAILABLE = True
@@ -174,15 +180,30 @@ class LLMEngine:
         """
         if not transcript.strip():
             return "_No transcript provided._"
+        return self._generate(
+            self._notes_messages(transcript), max_new_tokens=MAX_NEW_TOKENS_NOTES
+        )
 
+    def stream_notes(self, transcript: str) -> Iterator[str]:
+        """Yield the notes as they are generated (decoded text pieces).
+
+        Uses ``TextIteratorStreamer`` with generation running in a worker
+        thread, so callers can forward tokens to a UI in real time.
+        """
+        if not transcript.strip():
+            yield "_No transcript provided._"
+            return
+        yield from self._generate_stream(
+            self._notes_messages(transcript), max_new_tokens=MAX_NEW_TOKENS_NOTES
+        )
+
+    def _notes_messages(self, transcript: str) -> List[Dict[str, str]]:
         # Truncate extremely long transcripts to fit context window (4096 tok)
         truncated = self._truncate_to_tokens(transcript, max_tokens=2800)
-
-        messages = [
+        return [
             {"role": "system", "content": SYSTEM_PROMPT_NOTES},
             {"role": "user", "content": f"Transcript:\n\n{truncated}"},
         ]
-        return self._generate(messages, max_new_tokens=MAX_NEW_TOKENS_NOTES)
 
     def generate_quiz(
         self,
@@ -201,8 +222,9 @@ class LLMEngine:
         Returns
         -------
         List[Dict[str, Any]]
-            Parsed list of MCQ dicts, each containing:
-            ``question``, ``options``, ``correct_answer``, ``explanation``.
+            Parsed list of MCQ dicts in the canonical schema of
+            :func:`~src.pipelines.quiz_schema.normalise_quiz`: ``question``,
+            ``options``, ``answer_index``, ``correct_answer``, ``explanation``.
         """
         if not transcript.strip():
             return []
@@ -216,8 +238,8 @@ class LLMEngine:
         ]
         raw_output = self._generate(messages, max_new_tokens=MAX_NEW_TOKENS_QUIZ)
 
-        # ── Parse JSON from LLM output ─────────────────────────────────
-        return self._parse_quiz_json(raw_output)
+        # ── Parse JSON from LLM output, then validate the answer keys ──
+        return normalise_quiz(self._parse_quiz_json(raw_output))
 
     # ------------------------------------------------------------------
     # Inference
@@ -244,28 +266,66 @@ class LLMEngine:
         str
             Decoded model output (assistant reply only).
         """
-        input_ids = self.tokenizer.apply_chat_template(
-            conversation=messages,
-            return_tensors="pt",
-            add_generation_prompt=True,
-        )
-        input_ids = input_ids.to(self.model.device)
+        input_ids = self._encode(messages)
         input_length = input_ids.shape[1]
 
         with torch.no_grad():
             output_ids = self.model.generate(
-                input_ids,
-                max_new_tokens=max_new_tokens,
-                do_sample=True,
-                temperature=self.temperature,
-                top_p=0.9,
-                repetition_penalty=1.15,
-                pad_token_id=self.tokenizer.pad_token_id,
+                input_ids, **self._sampling_kwargs(max_new_tokens)
             )
 
         # Decode only the newly generated tokens (skip input prompt)
         generated = output_ids[0, input_length:]
         return self.tokenizer.decode(generated, skip_special_tokens=True).strip()
+
+    def _generate_stream(
+        self,
+        messages: List[Dict[str, str]],
+        max_new_tokens: int,
+    ) -> Iterator[str]:
+        """Streaming variant of :meth:`_generate`."""
+        streamer = TextIteratorStreamer(
+            self.tokenizer, skip_prompt=True, skip_special_tokens=True
+        )
+        kwargs = dict(
+            input_ids=self._encode(messages),
+            streamer=streamer,
+            **self._sampling_kwargs(max_new_tokens),
+        )
+        worker = Thread(target=self._generate_no_grad, kwargs=kwargs, daemon=True)
+        worker.start()
+        for piece in streamer:
+            if piece:
+                yield piece
+        worker.join()
+
+    def _generate_no_grad(self, **kwargs: Any) -> None:
+        with torch.no_grad():
+            self.model.generate(**kwargs)
+
+    def _encode(self, messages: List[Dict[str, str]]) -> torch.Tensor:
+        """Apply the chat template and return ``input_ids`` on the model device.
+
+        Newer ``transformers`` releases may return a ``BatchEncoding`` rather
+        than a bare tensor, so both shapes are accepted.
+        """
+        encoded = self.tokenizer.apply_chat_template(
+            conversation=messages,
+            return_tensors="pt",
+            add_generation_prompt=True,
+        )
+        input_ids = encoded["input_ids"] if hasattr(encoded, "keys") else encoded
+        return input_ids.to(self.model.device)
+
+    def _sampling_kwargs(self, max_new_tokens: int) -> Dict[str, Any]:
+        return dict(
+            max_new_tokens=max_new_tokens,
+            do_sample=True,
+            temperature=self.temperature,
+            top_p=0.9,
+            repetition_penalty=1.15,
+            pad_token_id=self.tokenizer.pad_token_id,
+        )
 
     # ------------------------------------------------------------------
     # Helpers

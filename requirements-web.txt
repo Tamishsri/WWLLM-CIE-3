@@ -1,0 +1,12 @@
+# WWLLM Lecture Studio, offline: everything server.py needs without the ML stack.
+# Stages whose models are missing fall back to offline engines automatically.
+#     pip install -r requirements-web.txt
+#     python server.py
+starlette>=0.38.0
+uvicorn>=0.30.0
+python-multipart>=0.0.9
+numpy>=1.26.0
+pandas>=2.2.0
+pyyaml>=6.0
+loguru>=0.7.0
+jiwer>=3.0.0

@@ -25,8 +25,9 @@ from __future__ import annotations
 
 import io
 import tempfile
+import wave
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import torch
 import torchaudio
@@ -43,6 +44,38 @@ TARGET_SAMPLE_RATE: int = 16_000
 
 _SUPPORTED_AUDIO_EXTS: set[str] = {".wav", ".mp3", ".flac", ".ogg"}
 _SUPPORTED_VIDEO_EXTS: set[str] = {".mp4", ".mkv", ".webm", ".avi"}
+
+
+def read_audio(source: str | Path | io.BytesIO) -> tuple[torch.Tensor, int]:
+    """Decode audio into ``(waveform [C, T], sample_rate)``.
+
+    Recent ``torchaudio`` releases delegate decoding to the optional
+    TorchCodec package and raise ``ImportError`` without it, so ``soundfile``
+    is the fallback.
+    """
+    try:
+        return torchaudio.load(source if isinstance(source, io.BytesIO) else str(source))
+    except (ImportError, RuntimeError, OSError) as exc:
+        logger.debug(f"torchaudio.load failed ({exc}); using soundfile.")
+
+    import soundfile as sf
+
+    if isinstance(source, io.BytesIO):
+        source.seek(0)
+    else:
+        source = str(source)
+    data, sr = sf.read(source, dtype="float32", always_2d=True)
+    return torch.from_numpy(data.T), sr
+
+
+def write_wav(path: str | Path, waveform: torch.Tensor, sample_rate: int) -> None:
+    """Write a mono waveform as 16-bit PCM WAV (no codec dependency)."""
+    pcm = (waveform.detach().cpu().flatten().clamp(-1.0, 1.0) * 32767).short()
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(pcm.numpy().tobytes())
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +124,19 @@ class AudioProcessor:
     def process(self, file_path: str | Path) -> List[torch.Tensor]:
         """Ingest a media file and return a list of speech-chunk tensors.
 
-        Each returned tensor is a 1-D float32 waveform at 16 kHz.
+        Each returned tensor is a 1-D float32 waveform at 16 kHz.  See
+        :meth:`process_with_spans` to also get each chunk's time range.
+        """
+        chunks, _ = self.process_with_spans(file_path)
+        return chunks
+
+    def process_with_spans(
+        self, file_path: str | Path
+    ) -> Tuple[List[torch.Tensor], List[Tuple[float, float]]]:
+        """Like :meth:`process`, but also return ``(start_s, end_s)`` per chunk.
+
+        The spans let the UI paint VAD chunks on the waveform and sync the
+        transcript to playback.
 
         Parameters
         ----------
@@ -100,8 +145,8 @@ class AudioProcessor:
 
         Returns
         -------
-        List[torch.Tensor]
-            Ordered speech chunks ready for ASR inference.
+        Tuple[List[torch.Tensor], List[Tuple[float, float]]]
+            Ordered speech chunks ready for ASR inference, and their spans.
 
         Raises
         ------
@@ -137,9 +182,9 @@ class AudioProcessor:
         logger.info(f"VAD detected {len(raw_stamps)} raw speech segments.")
 
         # Merge into 15-30 s chunks
-        chunks = self._merge_segments(waveform, raw_stamps)
+        chunks, spans = self._merge_segments(waveform, raw_stamps)
         logger.success(f"Produced {len(chunks)} speech chunks for ASR.")
-        return chunks
+        return chunks, spans
 
     def process_uploaded_bytes(
         self, data: bytes, filename: str
@@ -181,8 +226,7 @@ class AudioProcessor:
         tuple[torch.Tensor, int]
             (waveform, sample_rate)
         """
-        waveform, sr = torchaudio.load(str(path))
-        return waveform, sr
+        return read_audio(path)
 
     @staticmethod
     def _extract_audio_from_video(path: Path) -> tuple[torch.Tensor, int]:
@@ -212,8 +256,7 @@ class AudioProcessor:
         audio.export(buf, format="wav")
         buf.seek(0)
 
-        waveform, sr = torchaudio.load(buf)
-        return waveform, sr
+        return read_audio(buf)
 
     @staticmethod
     def _normalise(
@@ -280,7 +323,7 @@ class AudioProcessor:
         self,
         waveform: torch.Tensor,
         stamps: list[dict[str, int]],
-    ) -> List[torch.Tensor]:
+    ) -> Tuple[List[torch.Tensor], List[Tuple[float, float]]]:
         """Merge adjacent VAD segments into chunks of ≤ *max_chunk_sec*.
 
         Strategy:
@@ -300,17 +343,18 @@ class AudioProcessor:
 
         Returns
         -------
-        List[torch.Tensor]
-            Merged speech chunks.
+        Tuple[List[torch.Tensor], List[Tuple[float, float]]]
+            Merged speech chunks and their ``(start_s, end_s)`` spans.
         """
+        sr = TARGET_SAMPLE_RATE
         if not stamps:
             logger.warning("No speech detected by VAD — returning full waveform.")
-            return [waveform]
+            return [waveform], [(0.0, waveform.shape[-1] / sr)]
 
-        max_samples = int(self.max_chunk_sec * TARGET_SAMPLE_RATE)
-        min_samples = int(self.min_chunk_sec * TARGET_SAMPLE_RATE)
+        max_samples = int(self.max_chunk_sec * sr)
+        min_samples = int(self.min_chunk_sec * sr)
 
-        chunks: List[torch.Tensor] = []
+        ranges: List[List[int]] = []
         run_start: int = stamps[0]["start"]
         run_end: int = stamps[0]["end"]
 
@@ -321,16 +365,21 @@ class AudioProcessor:
                 run_end = proposed_end
             else:
                 # Flush current run
-                chunks.append(waveform[run_start:run_end])
+                ranges.append([run_start, run_end])
                 run_start = seg["start"]
                 run_end = seg["end"]
+
+        chunks: List[torch.Tensor] = [waveform[s:e] for s, e in ranges]
 
         # Flush final run
         final_chunk = waveform[run_start:run_end]
         if len(final_chunk) >= min_samples or not chunks:
             chunks.append(final_chunk)
+            ranges.append([run_start, run_end])
         else:
             # Merge tiny trailing fragment into the last chunk
             chunks[-1] = torch.cat([chunks[-1], final_chunk])
+            ranges[-1][1] = run_end
 
-        return chunks
+        spans = [(round(s / sr, 3), round(e / sr, 3)) for s, e in ranges]
+        return chunks, spans

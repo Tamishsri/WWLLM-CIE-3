@@ -28,6 +28,8 @@ IndicTransToolkit>=0.1.0
 silero-vad>=5.1
 
 # ── Audio / Video Processing ───────────────────────────────────────────────
+# soundfile decodes audio when torchaudio lacks its optional TorchCodec backend
+soundfile>=0.12.1
 pydub>=0.25.1
 ffmpeg-python>=0.2.0
 
@@ -37,6 +39,11 @@ bert-score>=0.3.13
 rouge-score>=0.1.2
 
 # ── Frontend ────────────────────────────────────────────────────────────────
+# Web studio (server.py). requirements-web.txt lists only what it needs offline.
+starlette>=0.38.0
+uvicorn>=0.30.0
+python-multipart>=0.0.9
+# Classic UI (app.py)
 streamlit>=1.35.0
 
 # ── Utilities ───────────────────────────────────────────────────────────────

@@ -1,15 +1,19 @@
 # ============================================================================
 # WWLLM — Application Configuration
 # ============================================================================
-# This YAML is loaded by app.py at startup.  Override values by setting
-# environment variables prefixed with WWLLM_ (e.g. WWLLM_ASR_BATCH_SIZE=4).
+# Loaded by server.py (web studio) and app.py (classic Streamlit UI).
+# Override any value with an environment variable WWLLM_<SECTION>_<KEY>,
+# e.g. WWLLM_ASR_BATCH_SIZE=4 or WWLLM_LLM_QUANTIZE_8BIT=false.
 
 app:
   title: "WWLLM — Multilingual Lecture-to-Notes & Quiz Generator"
-  version: "1.0.0"
+  version: "2.0.0"
 
 asr:
   model_id: "ai4bharat/indicconformer_stt_hi_hybrid_rnnt_large"
+  # Checkpoint per source language ({iso} = hi, en, ta, kn, te, ml).
+  # Add a `models:` mapping (e.g. models: {Tamil: /path/ta.nemo}) to override.
+  model_template: "ai4bharat/indicconformer_stt_{iso}_hybrid_rnnt_large"
   batch_size: 8
   device: null  # auto-detect
 
@@ -36,3 +40,8 @@ evaluation:
   bertscore_threshold: 0.70
   bert_model: "bert-base-multilingual-cased"
   output_dir: "outputs/evaluations"
+  references: "data/ground_truth/references.json"
+  predictions: "outputs/transcripts/eval_inputs.json"
+  # The bundled predictions are hand-written (generate_test_dataset.py), not
+  # model output. Set to false once they are replaced with real ASR results.
+  simulated: true

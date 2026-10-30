@@ -3,6 +3,9 @@ app.py — Streamlit Entry Point
 =============================================================================
 WWLLM: Multilingual Lecture-to-Notes & Quiz Generator
 
+Classic Streamlit UI. Needs the full ML stack; for the web studio, which also
+runs offline, use ``python server.py``.
+
 Launch:  streamlit run app.py
 
 Architecture:
@@ -23,15 +26,20 @@ Session State Keys (prevent re-running ML models on UI interactions):
 
 from __future__ import annotations
 
+import html
 import json
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List
 
 import streamlit as st
-import yaml
 
 # ── Local imports ──────────────────────────────────────────────────────────
+from src.config import load_config as read_config
+from src.pipelines.languages import ASR_LANGUAGES, SUPPORTED_TARGETS
+from src.services.benchmark import parse_predictions
+from src.services.capabilities import detect_capabilities
 from src.ui.styles import inject_css
 
 # ── Page configuration (MUST be the first Streamlit call) ──────────────────
@@ -52,14 +60,21 @@ inject_css()
 @st.cache_data
 def load_config() -> Dict[str, Any]:
     """Load ``configs/config.yaml`` once and cache across sessions."""
-    config_path = Path("configs/config.yaml")
-    if config_path.exists():
-        with open(config_path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
-    return {}
+    return read_config()
+
+
+@st.cache_resource
+def get_capabilities():
+    """Which stages have their models installed (cheap, nothing heavy imported)."""
+    return detect_capabilities()
 
 
 CFG = load_config()
+CAPS = get_capabilities()
+INSTALL_HINT = (
+    "isn't installed in this environment. Install the full stack (see README), "
+    "or run `python server.py` for the web studio, which works offline."
+)
 
 
 # ===========================================================================
@@ -79,16 +94,17 @@ def get_audio_processor():
     )
 
 
-@st.cache_resource(show_spinner="Loading IndicConformer ASR model…")
-def get_asr_engine():
-    """Instantiate ASREngine (IndicConformer). Cached as a singleton."""
+@st.cache_resource(show_spinner="Loading IndicConformer ASR model…", max_entries=1)
+def get_asr_engine(language: str = "Hindi"):
+    """Instantiate ASREngine for *language* (one checkpoint kept in memory)."""
     from src.pipelines.asr_engine import ASREngine
 
     asr_cfg = CFG.get("asr", {})
+    template = asr_cfg.get(
+        "model_template", "ai4bharat/indicconformer_stt_{iso}_hybrid_rnnt_large"
+    )
     return ASREngine(
-        model_id=asr_cfg.get(
-            "model_id", "ai4bharat/indicconformer_stt_hi_hybrid_rnnt_large"
-        ),
+        model_id=template.format(iso=ASR_LANGUAGES.get(language, "hi")),
         device=asr_cfg.get("device"),
         batch_size=asr_cfg.get("batch_size", 8),
     )
@@ -129,6 +145,7 @@ _DEFAULTS: Dict[str, Any] = {
     "quiz_json": None,
     "translated_notes": None,
     "translated_quiz": None,
+    "translated_lang": None,
     "upload_key": 0,
     "current_file_name": None,
 }
@@ -157,6 +174,7 @@ def _reset_downstream(from_stage: str = "all") -> None:
             "quiz_json",
             "translated_notes",
             "translated_quiz",
+            "translated_lang",
         ],
         "transcript": [
             "transcript",
@@ -164,9 +182,16 @@ def _reset_downstream(from_stage: str = "all") -> None:
             "quiz_json",
             "translated_notes",
             "translated_quiz",
+            "translated_lang",
         ],
-        "notes": ["notes_md", "quiz_json", "translated_notes", "translated_quiz"],
-        "translation": ["translated_notes", "translated_quiz"],
+        "notes": [
+            "notes_md",
+            "quiz_json",
+            "translated_notes",
+            "translated_quiz",
+            "translated_lang",
+        ],
+        "translation": ["translated_notes", "translated_quiz", "translated_lang"],
     }
     for key in stages.get(from_stage, stages["all"]):
         st.session_state[key] = None
@@ -186,26 +211,24 @@ def render_quiz(quiz: List[Dict[str, Any]], show_answers: bool = True) -> None:
         Whether to highlight correct answers.
     """
     for i, q in enumerate(quiz, 1):
+        answer = q.get("answer_index")
         options_html = ""
-        for opt in q.get("options", []):
-            is_correct = (
-                opt.strip() == q.get("correct_answer", "").strip()
-                if show_answers
-                else False
-            )
+        for j, opt in enumerate(q.get("options", [])):
+            is_correct = show_answers and j == answer
             cls = "quiz-option correct" if is_correct else "quiz-option"
             marker = " ✅" if is_correct else ""
-            options_html += f'<div class="{cls}">{opt}{marker}</div>'
+            options_html += f'<div class="{cls}">{html.escape(opt)}{marker}</div>'
 
         explanation_html = ""
         if show_answers and q.get("explanation"):
             explanation_html = (
-                f'<div class="quiz-explanation">💡 {q["explanation"]}</div>'
+                '<div class="quiz-explanation">💡 '
+                f'{html.escape(q["explanation"])}</div>'
             )
 
         card_html = f"""
         <div class="quiz-card">
-            <h4>Q{i}. {q.get("question", "")}</h4>
+            <h4>Q{i}. {html.escape(q.get("question", ""))}</h4>
             {options_html}
             {explanation_html}
         </div>
@@ -229,16 +252,19 @@ with st.sidebar:
     st.markdown("### 🌐 Target Language")
     target_lang = st.selectbox(
         "Translate output to:",
-        options=["Hindi", "Tamil", "Kannada"],
+        options=list(SUPPORTED_TARGETS),
         index=0,
         label_visibility="collapsed",
     )
+    # A translation only stands for the language it was made in.
+    if st.session_state.translated_lang not in (None, target_lang):
+        _reset_downstream("translation")
 
     # ── ASR language ───────────────────────────────────────────────────
     st.markdown("### 🎙️ Source Language (ASR)")
     asr_lang = st.selectbox(
         "Source audio language:",
-        options=["Hindi", "English", "Tamil", "Kannada", "Telugu", "Malayalam"],
+        options=list(ASR_LANGUAGES),
         index=0,
         label_visibility="collapsed",
     )
@@ -254,15 +280,18 @@ with st.sidebar:
 
     # ── System info ────────────────────────────────────────────────────
     st.markdown("### 📊 System")
-    import torch
+    if CAPS.has("torch"):
+        import torch
 
-    gpu_available = torch.cuda.is_available()
-    gpu_name = torch.cuda.get_device_name(0) if gpu_available else "N/A"
-    st.markdown(
-        f"- **GPU:** {'✅ ' + gpu_name if gpu_available else '❌ CPU only'}\n"
-        f"- **CUDA:** {torch.version.cuda if gpu_available else 'N/A'}\n"
-        f"- **PyTorch:** {torch.__version__}"
-    )
+        gpu_available = torch.cuda.is_available()
+        gpu_name = torch.cuda.get_device_name(0) if gpu_available else "N/A"
+        st.markdown(
+            f"- **GPU:** {'✅ ' + gpu_name if gpu_available else '❌ CPU only'}\n"
+            f"- **CUDA:** {torch.version.cuda if gpu_available else 'N/A'}\n"
+            f"- **PyTorch:** {torch.__version__}"
+        )
+    else:
+        st.markdown("- **PyTorch:** not installed")
 
 
 # ===========================================================================
@@ -314,6 +343,8 @@ with tab_transcribe:
                 height=300,
                 disabled=True,
             )
+        elif not CAPS.live("asr"):
+            st.warning(f"IndicConformer {INSTALL_HINT}", icon="⚠️")
         else:
             if st.button("🚀 Run Transcription", key="btn_transcribe", type="primary"):
                 # ── Stage 1: VAD chunking ──────────────────────────────
@@ -336,7 +367,7 @@ with tab_transcribe:
                 # ── Stage 2: ASR ───────────────────────────────────────
                 with st.status("🎙️ Running IndicConformer ASR…", expanded=True) as status:
                     st.write("Loading ASR model…")
-                    asr = get_asr_engine()
+                    asr = get_asr_engine(asr_lang)
 
                     st.write(f"Transcribing {len(chunks)} chunks…")
                     progress_bar = st.progress(0.0)
@@ -373,6 +404,8 @@ with tab_notes:
 
     if st.session_state.transcript is None:
         st.info("Run transcription first (Tab 1).", icon="📝")
+    elif st.session_state.notes_md is None and not CAPS.live("llm"):
+        st.warning(f"BharatGen Param-1 {INSTALL_HINT}", icon="⚠️")
     elif st.session_state.notes_md is not None:
         st.success("Notes cached.", icon="✅")
         st.markdown(st.session_state.notes_md)
@@ -415,6 +448,8 @@ with tab_quiz:
 
     if st.session_state.transcript is None:
         st.info("Run transcription first (Tab 1).", icon="📝")
+    elif st.session_state.quiz_json is None and not CAPS.live("llm"):
+        st.warning(f"BharatGen Param-1 {INSTALL_HINT}", icon="⚠️")
     elif st.session_state.quiz_json is not None:
         st.success(
             f"Quiz cached — {len(st.session_state.quiz_json)} questions.", icon="✅"
@@ -468,14 +503,14 @@ with tab_translate:
 
     if not has_content:
         st.info("Generate notes or quiz first (Tabs 2-3).", icon="📒")
+    elif not CAPS.live("mt") and st.session_state.translated_lang is None:
+        st.warning(f"IndicTrans2 {INSTALL_HINT}", icon="⚠️")
     else:
-        from src.pipelines.translator import SUPPORTED_TARGETS
-
         flores_code = SUPPORTED_TARGETS.get(target_lang, "hin_Deva")
         st.markdown(f"**Target:** {target_lang} (`{flores_code}`)")
 
         # Check cache
-        if st.session_state.translated_notes is not None:
+        if st.session_state.translated_lang == target_lang:
             st.success("Translation cached.", icon="✅")
         else:
             if st.button(
@@ -504,6 +539,7 @@ with tab_translate:
                             st.session_state.quiz_json, target_lang=flores_code
                         )
 
+                    st.session_state.translated_lang = target_lang
                     trans_time = time.perf_counter() - t0
                     status.update(
                         label=f"✅ Translation complete in {trans_time:.1f}s",
@@ -531,7 +567,7 @@ with tab_translate:
 with tab_eval:
     st.markdown("## 📊 Evaluation Suite")
     st.markdown(
-        "Upload a ground-truth JSON file to evaluate ASR accuracy (WER) "
+        "Upload ground truth and predictions to evaluate ASR accuracy (WER) "
         "and summarisation quality (BERTScore, ROUGE)."
     )
 
@@ -545,25 +581,44 @@ with tab_eval:
         ),
     )
 
+    pred_file = st.file_uploader(
+        "Upload predictions JSON",
+        type=["json"],
+        key="pred_uploader",
+        help=(
+            'Either {"audio_file": "transcript"} or the richer '
+            '{"predictions", "summaries_pred", "summaries_ref"} format.'
+        ),
+    )
+
     if gt_file is not None:
+        if pred_file is None:
+            st.info("Without predictions, only the file's structure is checked.", icon="ℹ️")
         if st.button("📊 Run Evaluation", key="btn_eval", type="primary"):
             from src.pipelines.eval_pipeline import EvalPipeline
 
             with st.status("📊 Running evaluation…", expanded=True) as status:
-                import tempfile
-
-                # Write GT to temp file for the evaluator
-                gt_path = Path(tempfile.mktemp(suffix=".json"))
-                gt_path.write_bytes(gt_file.getvalue())
-
+                predictions, summaries_pred, summaries_ref = (
+                    parse_predictions(json.loads(pred_file.getvalue()))
+                    if pred_file is not None
+                    else ({}, {}, {})
+                )
                 evaluator = EvalPipeline(
                     output_dir=CFG.get("evaluation", {}).get(
                         "output_dir", "outputs/evaluations"
                     )
                 )
-                results = evaluator.run(gt_path)
+                # The evaluator reads a path, so hand it a temporary copy.
+                with tempfile.TemporaryDirectory() as tmp:
+                    gt_path = Path(tmp) / "references.json"
+                    gt_path.write_bytes(gt_file.getvalue())
+                    results = evaluator.run(
+                        gt_path,
+                        predictions=predictions,
+                        summaries_pred=summaries_pred,
+                        summaries_ref=summaries_ref,
+                    )
                 df = evaluator.generate_report_df(results)
-                gt_path.unlink(missing_ok=True)
 
                 status.update(label="✅ Evaluation complete", state="complete")
 
