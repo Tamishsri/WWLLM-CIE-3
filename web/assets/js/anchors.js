@@ -7,6 +7,7 @@
 // lecture is known.
 
 import { LectureIndex } from "./lecture.js";
+import { levelHeadings } from "./markdown.js";
 
 const SUMMARY_RE = /takeaway|key points|key terms|summary|overview|निष्कर्ष|सारांश/i;
 
@@ -14,7 +15,7 @@ const SUMMARY_RE = /takeaway|key points|key terms|summary|overview|निष्�
 export function parseSections(notes) {
   const sections = [];
   let current = null;
-  for (const line of String(notes || "").split(/\r?\n/)) {
+  for (const line of levelHeadings(notes).split(/\r?\n/)) {
     const heading = line.match(/^\s{0,3}##\s+(.*?)\s*#*\s*$/);
     if (heading) {
       current = { heading: heading[1].replace(/[*_`]/g, ""), lines: [] };

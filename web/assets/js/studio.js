@@ -47,9 +47,8 @@ const PREFS = ["sourceLang", "target", "numQuestions", "notesView", "translateVi
 const MEDIA_RE = /\.(wav|mp3|flac|ogg|m4a|mp4|mkv|webm)$/i;
 const MODE_LABEL = {
   live: "Live model",
-  sample: "Pre-rendered sample",
   fallback: "Offline fallback",
-  replay: "Eval-set replay",
+  replay: "Stored prediction",
   manual: "Your text",
 };
 const RATES = [1, 1.25, 1.5, 2, 0.75];
@@ -218,7 +217,8 @@ const stageLive = (key) => Boolean(ctx.status?.stages?.[key]?.live);
 const targets = () => ctx.status?.languages?.translate || [];
 const asrLangs = () => ctx.status?.languages?.asr || [];
 const nativeOf = (name) => targets().find((t) => t.name === name)?.native || asrLangs().find((t) => t.name === name)?.native || name;
-const sampleContent = () => S.notesMeta?.mode === "sample" || S.quizMeta?.mode === "sample";
+const sampleContent = () => S.source?.kind === "sample";
+const stageName = (key, fallback) => ctx.status?.stages?.[key]?.name || fallback;
 
 /** Search index of the current transcript (rebuilt when the transcript changes). */
 function lecture() {
@@ -410,9 +410,9 @@ function signalHTML() {
   const nodes = [
     ["01 · Input", "Audio or video", "Resampled to 16 kHz mono", `<span class="chip" data-mode="live"><span class="dot"></span>Ready</span>`],
     ["02 · VAD", "Silero-VAD", "Speech chunks ≤ 25 s, silence dropped", chip("vad")],
-    ["03 · ASR", "IndicConformer", "600M hybrid CTC-RNNT, per language", chip("asr")],
+    ["03 · ASR", stageName("asr", "Speech recognition"), "A model for each language", chip("asr")],
     ["04 · LLM", "BharatGen Param-1", "Structured notes + MCQs", chip("llm")],
-    ["05 · MT", "IndicTrans2", "English → 10 Indian languages", chip("mt")],
+    ["05 · MT", stageName("mt", "Translation"), "English → 10 Indian languages", chip("mt")],
   ];
   return nodes
     .map(
@@ -630,7 +630,7 @@ function deckHTML() {
   const title = src.title || src.name;
   const lang = S.transcriptMeta?.language || S.sourceLang;
   const meta = [
-    src.kind === "sample" ? "Sample lecture · synthetic voice" : isText ? "Pasted transcript" : src.name,
+    src.kind === "sample" ? "Sample lecture · text-to-speech voice" : isText ? "Pasted transcript" : src.name,
     src.duration ? fmtTime(src.duration) : null,
     src.size ? fmtBytes(src.size) : null,
     `${lang} · ${nativeOf(lang)}`,
@@ -784,7 +784,7 @@ function paintMini() {
   const mini = ctx.root?.querySelector("#mini");
   if (!mini) return;
   const a = ctx.audio;
-  const show = Boolean(a) && !ctx.deckVisible && (!a.paused || a.currentTime > 0) && !isTheatreOpen();
+  const show = Boolean(a) && !ctx.deckVisible && !a.ended && (!a.paused || a.currentTime > 0) && !isTheatreOpen();
   mini.hidden = !show;
   if (!show) return;
   mini.querySelector(".play-btn").innerHTML = icon(a.paused ? "play" : "pause");
@@ -907,7 +907,9 @@ const chip = (text, attrs = "") => `<span class="chip" ${attrs}>${text}</span>`;
 
 function modeChip(meta) {
   if (!meta?.mode) return "";
-  return `<span class="chip" data-mode="${esc(meta.mode)}" title="${esc(meta.engine || "")}"><span class="dot"></span>${esc(MODE_LABEL[meta.mode] || meta.mode)}</span>`;
+  const label = meta.cached ? "Model output · stored" : MODE_LABEL[meta.mode] || meta.mode;
+  const when = meta.cached && meta.created ? ` · generated ${new Date(meta.created * 1000).toLocaleDateString()}` : "";
+  return `<span class="chip" data-mode="${esc(meta.mode)}" title="${esc((meta.engine || "") + when)}"><span class="dot"></span>${esc(label)}</span>`;
 }
 
 const timeChip = (seconds) => (seconds != null ? chip(`${icon("clock", "icon-sm")}${seconds}s`) : "");
@@ -978,7 +980,8 @@ function transcriptPanel() {
     has && !running && !editing
       ? `${seg("transcript-view", S.transcriptView, [["segments", "Synced", "wave"], ["edit", "Edit", "edit"]])}
          ${btn("copy-transcript", "", "copy", "btn-sm btn-quiet", 'title="Copy transcript" aria-label="Copy transcript"')}
-         ${btn("dl-transcript", ".txt", "download", "btn-sm")}`
+         ${btn("dl-transcript", ".txt", "download", "btn-sm")}
+         ${S.source.kind === "text" ? "" : btn("transcribe", "Re-transcribe", "refresh", "btn-sm")}`
       : "";
   const head = panelHead(
     "Transcript",
@@ -990,7 +993,7 @@ function transcriptPanel() {
   if (running) {
     body = runnerHTML(
       "Transcribing the lecture",
-      [["Detect speech", "voice activity detection"], ["Transcribe chunks", "IndicConformer ASR"]],
+      [["Detect speech", "voice activity detection"], ["Transcribe chunks", stageName("asr", "speech recognition")]],
       st.phase,
       st.detail,
       st.progress
@@ -1012,7 +1015,7 @@ function transcriptPanel() {
     body = `<div class="empty">
         <div class="empty-art">${icon("mic", "icon-lg")}</div>
         <h3>${locked ? "Transcribe the sample lecture" : "What language is the lecture in?"}</h3>
-        <p>Silero-VAD splits the recording into speech chunks, then IndicConformer transcribes each chunk${locked ? "." : " in the language you pick."}</p>
+        <p>Silero-VAD splits the recording into speech chunks, then ${esc(stageName("asr", "the speech model"))} transcribes each chunk${locked ? "." : " in the language you pick."}</p>
         ${locked ? "" : `<div class="lang-grid">${langs
           .map(
             (l) => `<button class="lang-chip" type="button" data-action="asr-lang" data-value="${esc(l.name)}" aria-pressed="${S.sourceLang === l.name}">
@@ -1327,7 +1330,7 @@ function translatePanel() {
         .map((l) => {
           const av = availability(l);
           const done = S.translations[l.name] ? " · done" : "";
-          const sub = av === "live" ? "IndicTrans2" : av === "sample" ? "sample" : "needs model";
+          const sub = av === "live" ? stageName("mt", "model") : av === "sample" ? "stored" : "needs model";
           return `<button class="lang-chip ${av === "locked" ? "locked" : ""}" type="button" data-action="target" data-value="${esc(l.name)}" aria-pressed="${S.target === l.name}">
               <b>${esc(l.native)}</b><small><i class="avail ${av === "live" ? "on" : av}"></i>${esc(l.name)} · ${sub}${done}</small></button>`;
         })
@@ -1442,34 +1445,42 @@ const RUNNERS = {
     ctx.wave?.clearChunkStates();
     const r = await stream(
       "/api/transcribe",
-      { file_id: S.source.id, language: S.sourceLang },
+      { file_id: S.source.id, language: S.sourceLang, fresh: Boolean(S.transcript) },
       (ev) => onStreamEvent("transcript", ev),
       signal
     );
     S.chunks = r.chunks;
     S.segments = r.segments;
-    setTranscript(r.transcript, { engine: r.engine, mode: r.mode, timings: r.timings, language: r.language });
+    setTranscript(r.transcript, {
+      engine: r.engine,
+      mode: r.mode,
+      cached: r.cached,
+      created: r.created,
+      timings: r.timings,
+      language: r.language,
+    });
     S.transcriptView = "segments";
     ctx.wave?.setChunks(S.chunks);
   },
   async notes(signal) {
     ctx.notesStream = "";
     const title = S.source.kind === "text" && S.source.title !== "Pasted transcript" ? S.source.title : null;
-    const r = await stream("/api/notes", { transcript: S.transcript, title }, (ev) => onStreamEvent("notes", ev), signal);
+    const fresh = Boolean(S.notes) && !notesStale();
+    const r = await stream("/api/notes", { transcript: S.transcript, title, fresh }, (ev) => onStreamEvent("notes", ev), signal);
     S.notes = r.notes;
-    S.notesMeta = { engine: r.engine, mode: r.mode, seconds: r.seconds, rev: S.transcriptRev };
+    S.notesMeta = { engine: r.engine, mode: r.mode, cached: r.cached, created: r.created, seconds: r.seconds, rev: S.transcriptRev };
     S.notesRev += 1;
     ctx.notesStream = "";
   },
   async quiz(signal) {
     const r = await stream(
       "/api/quiz",
-      { transcript: S.transcript, num_questions: S.numQuestions },
+      { transcript: S.transcript, num_questions: S.numQuestions, fresh: S.quiz.length > 0 && !quizStale() },
       (ev) => onStreamEvent("quiz", ev),
       signal
     );
     S.quiz = r.quiz;
-    S.quizMeta = { engine: r.engine, mode: r.mode, seconds: r.seconds, rev: S.transcriptRev };
+    S.quizMeta = { engine: r.engine, mode: r.mode, cached: r.cached, created: r.created, seconds: r.seconds, rev: S.transcriptRev };
     S.quizRev += 1;
     S.quizAnswers = {};
     S.quizMode = "practice";
@@ -1479,7 +1490,7 @@ const RUNNERS = {
     S.stages.translate.target = target;
     const r = await stream(
       "/api/translate",
-      { notes: S.notes, quiz: S.quiz, target },
+      { notes: S.notes, quiz: S.quiz, target, fresh: Boolean(S.translations[target]) && !trStale(target) },
       (ev) => onStreamEvent("translate", ev),
       signal
     );

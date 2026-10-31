@@ -83,6 +83,7 @@ export function openTheatre({ audio, index, model, concepts = [], title, duratio
       <p class="t-next" id="tNext"></p>
       <p class="t-hint" id="tHint">Word timing is estimated from each speech chunk.</p>
     </div>
+    <p class="t-finale">Every ring is one speech chunk, shaped by how the voice rose and fell.</p>
     <footer class="t-bar">
       <button class="t-play" data-t="play" aria-label="Play or pause">${icon(audio.paused ? "play" : "pause")}</button>
       <span class="t-time" id="tTime">0:00</span>
@@ -138,6 +139,7 @@ export function openTheatre({ audio, index, model, concepts = [], title, duratio
       const ratio = (t - s.start) / (s.end - s.start || 1);
       const at = ratio * s.text.length;
       tokens.forEach((w) => w.classList.toggle("on", Number(w.dataset.at) <= at));
+      $("tcNow").classList.toggle("said", ratio >= 0.97);
     }
   };
 
@@ -164,8 +166,13 @@ export function openTheatre({ audio, index, model, concepts = [], title, duratio
 
   const syncPlay = () => (root.querySelector('[data-t="play"]').innerHTML = icon(audio.paused ? "play" : "pause"));
   const togglePlay = () => (audio.paused ? audio.play().catch(() => {}) : audio.pause());
+  // At the end the finished rangoli takes the stage.
+  const syncFinale = () => root.classList.toggle("finished", audio.ended);
   audio.addEventListener("play", syncPlay);
   audio.addEventListener("pause", syncPlay);
+  audio.addEventListener("ended", syncFinale);
+  audio.addEventListener("seeking", syncFinale);
+  audio.addEventListener("play", syncFinale);
 
   const seekTo = (clientX) => {
     const rect = $("tScrub").getBoundingClientRect();
@@ -211,6 +218,10 @@ export function openTheatre({ audio, index, model, concepts = [], title, duratio
     removeEventListener("keydown", onKey, true);
     audio.removeEventListener("play", syncPlay);
     audio.removeEventListener("pause", syncPlay);
+    audio.removeEventListener("ended", syncFinale);
+    audio.removeEventListener("seeking", syncFinale);
+    audio.removeEventListener("play", syncFinale);
+    document.activeElement?.blur(); // so Space means play/pause again, not "reopen"
     document.body.classList.remove("theatre-open");
     root.classList.add("closing");
     setTimeout(() => root.remove(), 260);

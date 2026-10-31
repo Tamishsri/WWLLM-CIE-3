@@ -6,9 +6,8 @@ Handles audio extraction from .wav / .mp3 / .mp4 files, resamples to
 (15–30 s) while dropping extended silences.
 
 Architecture Notes:
-    • Uses ``torchaudio`` for I/O and resampling — no subprocess calls to
-      ffmpeg unless the input is .mp4 (video), in which case ``pydub`` is
-      used for demuxing.
+    • Uses ``soundfile`` / ``torchaudio`` for I/O and resampling; anything
+      they can't read directly (video, .m4a) is decoded with ``ffmpeg``.
     • Silero-VAD runs on CPU (single-threaded, as recommended by upstream)
       regardless of the global device setting.
     • Adjacent VAD speech segments are merged up to ``max_chunk_sec`` to
@@ -24,6 +23,8 @@ Typical usage::
 from __future__ import annotations
 
 import io
+import shutil
+import subprocess
 import tempfile
 import wave
 from pathlib import Path
@@ -33,8 +34,12 @@ import torch
 import torchaudio
 from loguru import logger
 
-# Silero-VAD helper functions
-from silero_vad import load_silero_vad, get_speech_timestamps
+# Silero-VAD helper functions.  Importing the package pins the whole process to
+# one thread, which would slow every model that runs afterwards.
+_threads = torch.get_num_threads()
+from silero_vad import load_silero_vad, get_speech_timestamps  # noqa: E402
+
+torch.set_num_threads(_threads)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -43,7 +48,7 @@ TARGET_SAMPLE_RATE: int = 16_000
 """All audio is resampled to 16 kHz mono before processing."""
 
 _SUPPORTED_AUDIO_EXTS: set[str] = {".wav", ".mp3", ".flac", ".ogg"}
-_SUPPORTED_VIDEO_EXTS: set[str] = {".mp4", ".mkv", ".webm", ".avi"}
+_SUPPORTED_VIDEO_EXTS: set[str] = {".mp4", ".mkv", ".webm", ".avi", ".m4a"}
 
 
 def read_audio(source: str | Path | io.BytesIO) -> tuple[torch.Tensor, int]:
@@ -87,11 +92,7 @@ class AudioProcessor:
     Parameters
     ----------
     max_chunk_sec : float
-        Maximum duration (seconds) of a single speech chunk.  Adjacent
-        VAD segments are merged until this ceiling is hit.  Default 25 s.
-    min_chunk_sec : float
-        Minimum duration (seconds).  Chunks shorter than this are merged
-        with their neighbour if possible.  Default 2 s.
+        Maximum duration (seconds) of a single speech chunk.  Default 25 s.
     vad_threshold : float
         Silero-VAD speech probability threshold (0–1).  Higher values
         are stricter.  Default 0.45.
@@ -103,17 +104,13 @@ class AudioProcessor:
     def __init__(
         self,
         max_chunk_sec: float = 25.0,
-        min_chunk_sec: float = 2.0,
         vad_threshold: float = 0.45,
         min_silence_ms: int = 300,
     ) -> None:
         self.max_chunk_sec = max_chunk_sec
-        self.min_chunk_sec = min_chunk_sec
         self.vad_threshold = vad_threshold
         self.min_silence_ms = min_silence_ms
 
-        # Silero recommends single-threaded CPU execution
-        torch.set_num_threads(1)
         logger.info("Loading Silero-VAD model …")
         self._vad_model = load_silero_vad()
         logger.success("Silero-VAD ready.")
@@ -181,8 +178,7 @@ class AudioProcessor:
         raw_stamps = self._run_vad(waveform)
         logger.info(f"VAD detected {len(raw_stamps)} raw speech segments.")
 
-        # Merge into 15-30 s chunks
-        chunks, spans = self._merge_segments(waveform, raw_stamps)
+        chunks, spans = self._cut_segments(waveform, raw_stamps)
         logger.success(f"Produced {len(chunks)} speech chunks for ASR.")
         return chunks, spans
 
@@ -230,33 +226,25 @@ class AudioProcessor:
 
     @staticmethod
     def _extract_audio_from_video(path: Path) -> tuple[torch.Tensor, int]:
-        """Extract audio track from a video container.
-
-        Falls back to ``pydub`` (which shells out to ffmpeg) because
-        torchaudio's video backend is not universally available.
+        """Extract the audio track from a video container with ffmpeg.
 
         Returns
         -------
         tuple[torch.Tensor, int]
             (waveform, sample_rate)
         """
-        try:
-            from pydub import AudioSegment
-        except ImportError as exc:
-            raise ImportError(
-                "pydub is required for video → audio extraction.  "
-                "Install it: pip install pydub"
-            ) from exc
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            raise RuntimeError(f"ffmpeg is needed to read {path.suffix} files — install it and add it to PATH.")
 
-        logger.info(f"Extracting audio from video: {path.name}")
-        audio = AudioSegment.from_file(str(path))
-
-        # Export to in-memory WAV for torchaudio loading
-        buf = io.BytesIO()
-        audio.export(buf, format="wav")
-        buf.seek(0)
-
-        return read_audio(buf)
+        logger.info(f"Extracting audio with ffmpeg: {path.name}")
+        result = subprocess.run(
+            [ffmpeg, "-nostdin", "-loglevel", "error", "-i", str(path), "-ac", "1",
+             "-ar", str(TARGET_SAMPLE_RATE), "-c:a", "pcm_s16le", "-f", "wav", "pipe:1"],
+            capture_output=True,
+            check=True,
+        )
+        return read_audio(io.BytesIO(result.stdout))
 
     @staticmethod
     def _normalise(
@@ -307,32 +295,34 @@ class AudioProcessor:
         list[dict[str, int]]
             Each dict has ``{'start': int, 'end': int}`` in samples.
         """
-        stamps = get_speech_timestamps(
-            waveform,
-            self._vad_model,
-            sampling_rate=TARGET_SAMPLE_RATE,
-            threshold=self.vad_threshold,
-            min_speech_duration_ms=250,
-            max_speech_duration_s=float(self.max_chunk_sec),
-            min_silence_duration_ms=self.min_silence_ms,
-            return_seconds=False,  # sample-level precision
-        )
-        return stamps
+        # Silero recommends one thread, but the setting is process-wide, so it
+        # must not leak into the ASR and LLM models that run afterwards.
+        threads = torch.get_num_threads()
+        torch.set_num_threads(1)
+        try:
+            return get_speech_timestamps(
+                waveform,
+                self._vad_model,
+                sampling_rate=TARGET_SAMPLE_RATE,
+                threshold=self.vad_threshold,
+                min_speech_duration_ms=250,
+                max_speech_duration_s=float(self.max_chunk_sec),
+                min_silence_duration_ms=self.min_silence_ms,
+                return_seconds=False,  # sample-level precision
+            )
+        finally:
+            torch.set_num_threads(threads)
 
-    def _merge_segments(
-        self,
+    @staticmethod
+    def _cut_segments(
         waveform: torch.Tensor,
         stamps: list[dict[str, int]],
     ) -> Tuple[List[torch.Tensor], List[Tuple[float, float]]]:
-        """Merge adjacent VAD segments into chunks of ≤ *max_chunk_sec*.
+        """Turn VAD timestamps into chunks, one per stretch of speech.
 
-        Strategy:
-            1. Walk through sorted timestamps.
-            2. Accumulate contiguous segments until adding the next one
-               would exceed ``max_chunk_sec``.
-            3. Flush the accumulated range as a single chunk.
-            4. Drop any final chunk shorter than ``min_chunk_sec``
-               (unless it's the only chunk).
+        Stretches are deliberately not merged.  Whisper's fine-tuned models
+        learned on single utterances and stop at the first long pause, so a
+        merged chunk would lose everything after its first sentence.
 
         Parameters
         ----------
@@ -344,42 +334,13 @@ class AudioProcessor:
         Returns
         -------
         Tuple[List[torch.Tensor], List[Tuple[float, float]]]
-            Merged speech chunks and their ``(start_s, end_s)`` spans.
+            Speech chunks and their ``(start_s, end_s)`` spans.
         """
         sr = TARGET_SAMPLE_RATE
         if not stamps:
             logger.warning("No speech detected by VAD — returning full waveform.")
             return [waveform], [(0.0, waveform.shape[-1] / sr)]
 
-        max_samples = int(self.max_chunk_sec * sr)
-        min_samples = int(self.min_chunk_sec * sr)
-
-        ranges: List[List[int]] = []
-        run_start: int = stamps[0]["start"]
-        run_end: int = stamps[0]["end"]
-
-        for seg in stamps[1:]:
-            proposed_end = seg["end"]
-            if (proposed_end - run_start) <= max_samples:
-                # Extend the current run
-                run_end = proposed_end
-            else:
-                # Flush current run
-                ranges.append([run_start, run_end])
-                run_start = seg["start"]
-                run_end = seg["end"]
-
-        chunks: List[torch.Tensor] = [waveform[s:e] for s, e in ranges]
-
-        # Flush final run
-        final_chunk = waveform[run_start:run_end]
-        if len(final_chunk) >= min_samples or not chunks:
-            chunks.append(final_chunk)
-            ranges.append([run_start, run_end])
-        else:
-            # Merge tiny trailing fragment into the last chunk
-            chunks[-1] = torch.cat([chunks[-1], final_chunk])
-            ranges[-1][1] = run_end
-
-        spans = [(round(s / sr, 3), round(e / sr, 3)) for s, e in ranges]
+        chunks = [waveform[seg["start"] : seg["end"]] for seg in stamps]
+        spans = [(round(seg["start"] / sr, 3), round(seg["end"] / sr, 3)) for seg in stamps]
         return chunks, spans

@@ -2,241 +2,201 @@
   {
     "audio_file": "lecture_01_ml_intro.wav",
     "transcript": "आज हम मशीन लर्निंग के बुनियादी सिद्धांतों पर चर्चा करेंगे। मशीन लर्निंग कृत्रिम बुद्धिमत्ता का एक उपक्षेत्र है जो कंप्यूटर को डेटा से सीखने की क्षमता प्रदान करता है।",
-    "summary": "Introduction to fundamental concepts of machine learning as a subset of AI enabling computers to learn from data.",
-    "condition": "Clean studio mic, standard Hindi"
+    "summary": "Introduction to fundamental concepts of machine learning as a subset of AI enabling computers to learn from data."
   },
   {
     "audio_file": "lecture_02_supervised_learning.wav",
     "transcript": "सुपरवाइज्ड लर्निंग में हम लेबल किए गए डेटा का उपयोग करते हैं। इसमें इनपुट और आउटपुट दोनों दिए जाते हैं और मॉडल इनके बीच के संबंध को सीखता है।",
-    "summary": "Supervised learning utilizes labeled datasets containing input-output pairs to learn predictive mappings.",
-    "condition": "Clean audio, moderate pace"
+    "summary": "Supervised learning utilizes labeled datasets containing input-output pairs to learn predictive mappings."
   },
   {
     "audio_file": "lecture_03_neural_networks.wav",
     "transcript": "न्यूरल नेटवर्क मानव मस्तिष्क से प्रेरित एक कम्प्यूटेशनल मॉडल है। इसमें कई परतें होती हैं जिन्हें इनपुट लेयर, हिडन लेयर और आउटपुट लेयर कहा जाता है।",
-    "summary": "Biological brain-inspired neural networks feature layered architectures of input, hidden, and output nodes.",
-    "condition": "Clean audio"
+    "summary": "Biological brain-inspired neural networks feature layered architectures of input, hidden, and output nodes."
   },
   {
     "audio_file": "lecture_04_gradient_descent.wav",
     "transcript": "ग्रेडिएंट डिसेंट एक ऑप्टिमाइज़ेशन एल्गोरिथम है जिसका उपयोग लॉस फंक्शन को न्यूनतम करने के लिए किया जाता है। लर्निंग रेट स्टेप साइज को नियंत्रित करता है।",
-    "summary": "Gradient descent minimizes the loss function iteratively scaled by the learning rate hyperparameter.",
-    "condition": "Mild reverberation"
+    "summary": "Gradient descent minimizes the loss function iteratively scaled by the learning rate hyperparameter."
   },
   {
     "audio_file": "lecture_05_overfitting_regularization.wav",
     "transcript": "ओवरफिटिंग तब होती है जब मॉडल ट्रेनिंग डेटा को याद कर लेता है लेकिन अनदेखे डेटा पर खराब प्रदर्शन करता है। एलवन और एलटू रेगुलराइजेशन इसे रोकते हैं।",
-    "summary": "Overfitting causes poor generalization on unseen test data, mitigated via L1 and L2 regularization.",
-    "condition": "Classroom echo"
+    "summary": "Overfitting causes poor generalization on unseen test data, mitigated via L1 and L2 regularization."
   },
   {
     "audio_file": "lecture_06_backpropagation_math.wav",
     "transcript": "बैकप्रोपेगेशन एल्गोरिथम मल्टीवेरिएट कैलकुलस के चेन रूल पर आधारित है जो हर भार के संबंध में एरर ग्रेडिएंट्स की गणना करता है।",
-    "summary": "Backpropagation computes error gradients with respect to network weights applying the calculus chain rule.",
-    "condition": "High technical jargon, fast articulation -> High WER"
+    "summary": "Backpropagation computes error gradients with respect to network weights applying the calculus chain rule."
   },
   {
     "audio_file": "lecture_07_support_vector_machines.wav",
     "transcript": "सपोर्ट वेक्टर मशीनें दो वर्गों के बीच अधिकतम मार्जिन वाला हाइपरप्लेन खोजती हैं। कर्नल ट्रिक नॉन-लीनियर डेटा को उच्च आयामों में प्रोजेक्ट करती है।",
-    "summary": "SVM finds the maximum-margin separating hyperplane, utilizing the kernel trick for non-linear feature mapping.",
-    "condition": "Clear audio"
+    "summary": "SVM finds the maximum-margin separating hyperplane, utilizing the kernel trick for non-linear feature mapping."
   },
   {
     "audio_file": "lecture_08_convolutional_layers.wav",
     "transcript": "कन्वोल्यूशनल न्यूरल नेटवर्क स्थानिक विशेषताओं को निकालने के लिए फिल्टर और पूलिंग परतों का उपयोग करते हैं, जो कंप्यूटर विज़न में बेहद प्रभावी हैं।",
-    "summary": "CNNs leverage convolution filters and spatial pooling for computer vision feature extraction.",
-    "condition": "Lecture hall mic"
+    "summary": "CNNs leverage convolution filters and spatial pooling for computer vision feature extraction."
   },
   {
     "audio_file": "lecture_09_recurrent_architectures.wav",
     "transcript": "रिकरेंट न्यूरल नेटवर्क अनुक्रमिक डेटा जैसे भाषा और टाइम सीरीज के लिए डिज़ाइन किए गए हैं, हालांकि वे वैनिशिंग ग्रेडिएंट समस्या से पीड़ित हो सकते हैं।",
-    "summary": "RNNs model sequential temporal dependencies but encounter vanishing gradient bottlenecks over long contexts.",
-    "condition": "Normal audio"
+    "summary": "RNNs model sequential temporal dependencies but encounter vanishing gradient bottlenecks over long contexts."
   },
   {
     "audio_file": "lecture_10_attention_mechanisms.wav",
     "transcript": "ट्रांसफॉर्मर आर्किटेक्चर में सेल्फ-अटेंशन तंत्र इनपुट अनुक्रम के विभिन्न भागों को अलग-अलग महत्व प्रदान करता है।",
-    "summary": "The Transformer self-attention mechanism weights the relational significance of tokens dynamically across the sequence.",
-    "condition": "Low SNR, fan hum -> High WER (>0.35)"
+    "summary": "The Transformer self-attention mechanism weights the relational significance of tokens dynamically across the sequence."
   },
   {
     "audio_file": "lecture_11_pipelining_hazards.wav",
     "transcript": "Instruction pipelining increases CPU instruction throughput by overlapping execution stages, but structural, data, and control hazards can stall the pipeline.",
-    "summary": "Instruction pipelining improves processor throughput via concurrent instruction phases, prone to structural, data, and control stalls.",
-    "condition": "Clean technical speech"
+    "summary": "Instruction pipelining improves processor throughput via concurrent instruction phases, prone to structural, data, and control stalls."
   },
   {
     "audio_file": "lecture_12_cache_coherence.wav",
     "transcript": "In shared memory multiprocessor systems, cache coherence protocols like MESI ensure that multiple local caches maintain consistent data states.",
-    "summary": "MESI cache coherence protocols maintain data consistency across distributed L1/L2 caches in multiprocessor systems.",
-    "condition": "Clear technical English"
+    "summary": "MESI cache coherence protocols maintain data consistency across distributed L1/L2 caches in multiprocessor systems."
   },
   {
     "audio_file": "lecture_13_virtual_memory_paging.wav",
     "transcript": "Virtual memory decouples physical address space from process logical space through page tables and translation lookaside buffers.",
-    "summary": "Virtual memory uses page tables and TLB hardware caches to translate logical addresses into physical RAM frames.",
-    "condition": "Overlapping classroom speech -> High WER (>0.40)"
+    "summary": "Virtual memory uses page tables and TLB hardware caches to translate logical addresses into physical RAM frames."
   },
   {
     "audio_file": "lecture_14_branch_prediction.wav",
     "transcript": "Dynamic branch predictors use two-level adaptive branch history tables to speculative execute instructions and minimize control hazard penalties.",
-    "summary": "Two-level branch prediction reduces control pipeline bubble penalties through speculative instruction fetching.",
-    "condition": "Clear speech"
+    "summary": "Two-level branch prediction reduces control pipeline bubble penalties through speculative instruction fetching."
   },
   {
     "audio_file": "lecture_15_cuda_memory_hierarchy.wav",
     "transcript": "NVIDIA GPU architectures feature a strict memory hierarchy consisting of global memory, shared memory, registers, and constant memory caches.",
-    "summary": "GPU acceleration requires optimal utilization of register files, fast shared scratchpads, and high-bandwidth global memory.",
-    "condition": "Clear technical speech"
+    "summary": "GPU acceleration requires optimal utilization of register files, fast shared scratchpads, and high-bandwidth global memory."
   },
   {
     "audio_file": "lecture_16_acid_properties.wav",
     "transcript": "ACID properties atomicity, consistency, isolation, and durability guarantee that database transactions are processed reliably in distributed environments.",
-    "summary": "ACID guarantees transactional integrity, fault tolerance, and isolation across concurrent database operations.",
-    "condition": "Clean audio"
+    "summary": "ACID guarantees transactional integrity, fault tolerance, and isolation across concurrent database operations."
   },
   {
     "audio_file": "lecture_17_indexing_b_trees.wav",
     "transcript": "B-plus trees are self-balancing search trees widely used in relational databases for disk-based indexing to guarantee logarithmic search and insertion times.",
-    "summary": "B+ Trees maintain balanced logarithmic index search structures optimized for block-level secondary storage access.",
-    "condition": "Clear articulation"
+    "summary": "B+ Trees maintain balanced logarithmic index search structures optimized for block-level secondary storage access."
   },
   {
     "audio_file": "lecture_18_raft_consensus.wav",
     "transcript": "The Raft consensus algorithm maintains a replicated state machine across independent cluster nodes through leader election and log replication.",
-    "summary": "Raft orchestrates distributed cluster consensus using leader election, heartbeats, and committed log replication.",
-    "condition": "Microphone clipping distortion -> High WER (>0.45)"
+    "summary": "Raft orchestrates distributed cluster consensus using leader election, heartbeats, and committed log replication."
   },
   {
     "audio_file": "lecture_19_nosql_cap_theorem.wav",
     "transcript": "CAP प्रमेय के अनुसार कोई भी वितरित डेटा सिस्टम एक साथ संगति, उपलब्धता और विभाजन सहिष्णुता इन तीनों की गारंटी नहीं दे सकता।",
-    "summary": "Brewer's CAP theorem demonstrates that distributed stores can only simultaneously satisfy two of consistency, availability, and partition tolerance.",
-    "condition": "Clear Hindi lecture"
+    "summary": "Brewer's CAP theorem demonstrates that distributed stores can only simultaneously satisfy two of consistency, availability, and partition tolerance."
   },
   {
     "audio_file": "lecture_20_kubernetes_orchestration.wav",
     "transcript": "कुबेरनेट्स कंटेनरीकृत अनुप्रयोगों के स्वचालित परिनियोजन, स्केलिंग और प्रबंधन के लिए एक ओपन-सोर्स ऑर्केस्ट्रेशन प्लेटफॉर्म है।",
-    "summary": "Kubernetes provides container orchestration automating cluster deployment, horizontal scaling, and health monitoring.",
-    "condition": "Normal audio"
+    "summary": "Kubernetes provides container orchestration automating cluster deployment, horizontal scaling, and health monitoring."
   },
   {
     "audio_file": "lecture_21_tamil_nlp_tokenization.wav",
     "transcript": "தமிழ் மொழியின் உருபனியல் அமைப்பு மிகவும் சிக்கலானது. சொல் பிரித்தெடுத்தல் மற்றும் வேர்ச்சொல் ஆய்வு இயற்கை மொழி செயலாக்கத்திற்கு இன்றியமையாதது.",
-    "summary": "Tamil agglutinative morphology demands specialized subword tokenization and lemmatization algorithms for NLP tasks.",
-    "condition": "Clear Tamil speech"
+    "summary": "Tamil agglutinative morphology demands specialized subword tokenization and lemmatization algorithms for NLP tasks."
   },
   {
     "audio_file": "lecture_22_tamil_speech_recognition.wav",
     "transcript": "ஒலிப்பியல் அடிப்படையில் தமிழ் பேச்சு அறிதல் அமைப்புகள் குறில் நெடில் வேறுபாடுகளைத் துல்லியமாகக் கண்டறிய வேண்டும்.",
-    "summary": "Tamil ASR models require high phonetic resolution to distinguish short vs long vowel durations.",
-    "condition": "Fast Tamil colloquial speech -> High WER (>0.35)"
+    "summary": "Tamil ASR models require high phonetic resolution to distinguish short vs long vowel durations."
   },
   {
     "audio_file": "lecture_23_kannada_morphology.wav",
     "transcript": "ಕನ್ನಡ ಭಾಷೆಯಲ್ಲಿ ವಿಭಕ್ತಿ ಪ್ರತ್ಯಯಗಳು ಮತ್ತು ಸಂಧಿ ನಿಯಮಗಳು ಪಠ್ಯ ಸಂಸ್ಕರಣೆಯಲ್ಲಿ ಪ್ರಮುಖ ಪಾತ್ರ ವಹಿಸುತ್ತವೆ.",
-    "summary": "Kannada morphological analysis requires handling agglutinative case markers (vibhakti) and euphonic sandhi rules.",
-    "condition": "Clear Kannada speech"
+    "summary": "Kannada morphological analysis requires handling agglutinative case markers (vibhakti) and euphonic sandhi rules."
   },
   {
     "audio_file": "lecture_24_kannada_information_retrieval.wav",
     "transcript": "ದ್ರಾವಿಡ ಭಾಷೆಗಳಲ್ಲಿ ಮಾಹಿತಿ ಮರುಗಳಿಕೆ ಮಾಡಲು ಸಮರ್ಥ ಕೃತಕ ಬುದ್ಧಿಮತ್ತೆ ಮಾದರಿಗಳ ಅಭಿವೃದ್ಧಿ ಅಗತ್ಯವಾಗಿದೆ.",
-    "summary": "Developing efficient neural information retrieval models is vital for low-resource Dravidian language ecosystems.",
-    "condition": "Low audio volume, tail cut off -> High WER (>0.50)"
+    "summary": "Developing efficient neural information retrieval models is vital for low-resource Dravidian language ecosystems."
   },
   {
     "audio_file": "lecture_25_indictrans_multilingual_mt.wav",
     "transcript": "AI4Bharat IndicTrans2 utilizes a shared transformer vocabulary across 22 Indic languages to facilitate high-quality zero-shot cross-lingual transfer.",
-    "summary": "IndicTrans2 leverages multilingual parameter sharing to enable robust translation across all scheduled Indian languages.",
-    "condition": "Studio quality"
+    "summary": "IndicTrans2 leverages multilingual parameter sharing to enable robust translation across all scheduled Indian languages."
   },
   {
     "audio_file": "lecture_26_deadlock_conditions.wav",
     "transcript": "A deadlock occurs when processes enter a cyclic wait state while simultaneously satisfying mutual exclusion, hold and wait, and no preemption conditions.",
-    "summary": "Coffman conditions—mutual exclusion, hold and wait, no preemption, circular wait—cause unrecoverable system deadlocks.",
-    "condition": "Standard lecture"
+    "summary": "Coffman conditions—mutual exclusion, hold and wait, no preemption, circular wait—cause unrecoverable system deadlocks."
   },
   {
     "audio_file": "lecture_27_tcp_congestion_control.wav",
     "transcript": "TCP Reno and Cubic use additive increase multiplicative decrease algorithms with slow start and fast retransmit to regulate network congestion.",
-    "summary": "AIMD and window growth algorithms in TCP Reno and Cubic optimize transmission bandwidth while mitigating network congestion collapse.",
-    "condition": "Clear audio"
+    "summary": "AIMD and window growth algorithms in TCP Reno and Cubic optimize transmission bandwidth while mitigating network congestion collapse."
   },
   {
     "audio_file": "lecture_28_cryptographic_hashes.wav",
     "transcript": "Cryptographic hash functions like SHA-256 exhibit pre-image resistance, second pre-image resistance, and collision resistance.",
-    "summary": "Secure hash standards ensure non-invertibility, collision intractability, and uniform avalanche dispersion of message digests.",
-    "condition": "Rapid speech rate -> High WER (>0.32)"
+    "summary": "Secure hash standards ensure non-invertibility, collision intractability, and uniform avalanche dispersion of message digests."
   },
   {
     "audio_file": "lecture_29_zero_knowledge_proofs.wav",
     "transcript": "Zero knowledge proofs allow a prover to mathematically demonstrate knowledge of a secret statement to a verifier without revealing the secret itself.",
-    "summary": "ZKP protocols prove validity of assertions without disclosing underlying witnesses or private cryptographic material.",
-    "condition": "Studio mic"
+    "summary": "ZKP protocols prove validity of assertions without disclosing underlying witnesses or private cryptographic material."
   },
   {
     "audio_file": "lecture_30_diffie_hellman_key_exchange.wav",
     "transcript": "The Diffie-Hellman protocol establishes a shared secret over an insecure channel by relying on the computational hardness of discrete logarithms.",
-    "summary": "Diffie-Hellman enables secure symmetric key agreement via modular exponentiation based on discrete logarithm intractability.",
-    "condition": "Clear lecture audio"
+    "summary": "Diffie-Hellman enables secure symmetric key agreement via modular exponentiation based on discrete logarithm intractability."
   },
   {
     "audio_file": "lecture_31_distributed_file_systems.wav",
     "transcript": "The Hadoop Distributed File System splits large datasets into sequential blocks replicated across commodity worker nodes for fault tolerance.",
-    "summary": "HDFS achieves storage resilience by distributing and triply replicating raw data blocks across commodity server clusters.",
-    "condition": "Clear articulation"
+    "summary": "HDFS achieves storage resilience by distributing and triply replicating raw data blocks across commodity server clusters."
   },
   {
     "audio_file": "lecture_32_quantum_computing_qubits.wav",
     "transcript": "क्वांटम कंप्यूटिंग में क्यूबिट्स सुपरपोजिशन और एंटैंगलमेंट जैसी क्वांटम मैकेनिक्स की विशेषताओं का उपयोग करके जटिल गणनाएं करते हैं।",
-    "summary": "Quantum processors manipulate qubits exploiting superposition and entanglement states for polynomial acceleration.",
-    "condition": "Hinglish technical terminology in echo chamber -> High WER (>0.38)"
+    "summary": "Quantum processors manipulate qubits exploiting superposition and entanglement states for polynomial acceleration."
   },
   {
     "audio_file": "lecture_33_reinforcement_learning_policy.wav",
     "transcript": "रीइन्फोर्समेंट लर्निंग में एजेंट पर्यावरण के साथ इंटरैक्शन करके पुरस्कार को अधिकतम करने वाली इष्टतम पॉलिसी सीखता है।",
-    "summary": "RL agents optimize state-to-action policy functions through trial-and-error environment rewards.",
-    "condition": "Clear Hindi speech"
+    "summary": "RL agents optimize state-to-action policy functions through trial-and-error environment rewards."
   },
   {
     "audio_file": "lecture_34_mapreduce_programming_model.wav",
     "transcript": "The MapReduce paradigm processes distributed big data by parallelizing map operations across worker nodes followed by localized shuffle and reduce phases.",
-    "summary": "MapReduce distributes scalable computations across cluster nodes via partitioned mapping, shuffling, and reduction.",
-    "condition": "Clean audio"
+    "summary": "MapReduce distributes scalable computations across cluster nodes via partitioned mapping, shuffling, and reduction."
   },
   {
     "audio_file": "lecture_35_transformer_kv_caching.wav",
     "transcript": "KV caching stores key and value projection tensors across autoregressive decoding steps to prevent redundant matrix multiplications in large language models.",
-    "summary": "Key-Value caching caches historical token attention states to accelerate autoregressive LLM decoding throughput.",
-    "condition": "Audio cut off at 2 seconds -> High WER (>0.60)"
+    "summary": "Key-Value caching caches historical token attention states to accelerate autoregressive LLM decoding throughput."
   },
   {
     "audio_file": "lecture_36_bayesian_inference_priors.wav",
     "transcript": "Bayesian probability updates prior beliefs using likelihood evidence to compute posterior distributions via Bayes theorem.",
-    "summary": "Bayesian reasoning computes posterior probabilities combining subjective prior belief distributions with observed experimental likelihoods.",
-    "condition": "Clear audio"
+    "summary": "Bayesian reasoning computes posterior probabilities combining subjective prior belief distributions with observed experimental likelihoods."
   },
   {
     "audio_file": "lecture_37_graph_neural_networks.wav",
     "transcript": "Graph Neural Networks aggregate feature representations from adjacent topological neighbors via message passing layers.",
-    "summary": "GNNs perform localized message-passing convolution over relational node neighborhoods in graph structures.",
-    "condition": "Clear speech"
+    "summary": "GNNs perform localized message-passing convolution over relational node neighborhoods in graph structures."
   },
   {
     "audio_file": "lecture_38_low_rank_adaptation_lora.wav",
     "transcript": "LoRA decomposes weight update matrices into low-rank representations, drastically slashing fine-tuning VRAM requirements for frontier models.",
-    "summary": "Low-Rank Adaptation reduces fine-tuning GPU memory by projecting transformer weight updates into rank-constrained matrix factors.",
-    "condition": "Low acoustic volume and mumbling -> High WER (>0.36)"
+    "summary": "Low-Rank Adaptation reduces fine-tuning GPU memory by projecting transformer weight updates into rank-constrained matrix factors."
   },
   {
     "audio_file": "lecture_39_retrieval_augmented_generation.wav",
     "transcript": "Retrieval Augmented Generation anchors LLM responses to external vector knowledge stores, drastically reducing factual hallucinations in domain QA.",
-    "summary": "RAG systems enrich generative language prompts with vector-retrieved domain documents to enhance empirical veracity.",
-    "condition": "Clear audio"
+    "summary": "RAG systems enrich generative language prompts with vector-retrieved domain documents to enhance empirical veracity."
   },
   {
     "audio_file": "lecture_40_speech_vad_silero.wav",
     "transcript": "Silero VAD accurately discards silent lecture intervals and classroom background noise to generate clean 15 to 30 second acoustic frames.",
-    "summary": "Deep voice activity detection segments continuous audio streams into optimal speech chunks while stripping background pauses.",
-    "condition": "Clean audio"
+    "summary": "Deep voice activity detection segments continuous audio streams into optimal speech chunks while stripping background pauses."
   }
 ]

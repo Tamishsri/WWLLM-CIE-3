@@ -36,7 +36,7 @@ desktop.ini
 ## Data & outputs (keep structure, ignore temporary uploads)
 data/uploads/*
 !data/uploads/.gitkeep
-data/sample/*.wav
+data/cache/
 outputs/notes/*
 !outputs/notes/.gitkeep
 outputs/quizzes/*

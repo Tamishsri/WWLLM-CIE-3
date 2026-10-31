@@ -132,6 +132,18 @@ _SCRIPT_RANGES: List[Tuple[str, int, int]] = [
 ]
 
 
+_PUNCTUATION = re.compile(r"[^\w\s\u0900-\u0D7F]|[\u0964\u0965]|_")
+
+
+def normalise_for_wer(text: str) -> str:
+    """Lower-case and strip punctuation, the usual preparation before scoring.
+
+    ASR output is rarely punctuated like a reference, and "है।" against "है"
+    is not a word error.
+    """
+    return " ".join(_PUNCTUATION.sub(" ", text.lower()).split())
+
+
 def detect_language(text: str) -> str:
     """Guess a transcript's language from its dominant script."""
     counts: Counter = Counter()
@@ -366,7 +378,11 @@ class EvalPipeline:
     @staticmethod
     def _score_transcript(result: EvalResult) -> None:
         """Fill WER, error counts and the word alignment via ``jiwer``."""
-        out = jiwer.process_words(result.reference_transcript, result.predicted_transcript)
+        reference = normalise_for_wer(result.reference_transcript)
+        prediction = normalise_for_wer(result.predicted_transcript)
+        if not reference or not prediction:
+            return
+        out = jiwer.process_words(reference, prediction)
         result.wer = float(out.wer)
         result.hits = out.hits
         result.substitutions = out.substitutions

@@ -19,6 +19,16 @@ ASR_LANGUAGES: Dict[str, str] = {
 }
 """Source languages with an IndicConformer checkpoint (name → ISO 639-1)."""
 
+WHISPER_MODELS: Dict[str, str] = {
+    "Hindi": "vasista22/whisper-hindi-small",
+    "Tamil": "vasista22/whisper-tamil-small",
+    "Kannada": "vasista22/whisper-kannada-small",
+    "Telugu": "vasista22/whisper-telugu-small",
+}
+"""Open checkpoints fine-tuned per language.  Others use ``GENERAL_WHISPER``."""
+
+GENERAL_WHISPER: str = "openai/whisper-small"
+
 SUPPORTED_TARGETS: Dict[str, str] = {
     "Hindi": "hin_Deva",
     "Tamil": "tam_Taml",

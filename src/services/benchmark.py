@@ -19,7 +19,7 @@ from src.pipelines.eval_pipeline import WER_THRESHOLD, EvalPipeline, EvalResult
 
 Payload = Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]
 
-# Lecture-number ranges of the bundled 40-lecture set (see generate_test_dataset.py)
+# Lecture-number ranges of the bundled 40-lecture set
 DOMAINS: List[Tuple[int, int, str]] = [
     (1, 10, "AI & Machine Learning"),
     (11, 15, "Computer Systems"),
@@ -70,6 +70,14 @@ def load_default_dataset(references: Path, predictions: Path) -> Tuple[List[Dict
     if predictions.exists():
         payload = parse_predictions(json.loads(predictions.read_text(encoding="utf-8")))
     return records, payload
+
+
+def load_measurement(predictions: Path) -> Optional[Dict[str, Any]]:
+    """How the bundled predictions were made, as recorded by ``scripts/run_benchmark.py``."""
+    if not predictions.exists():
+        return None
+    data = json.loads(predictions.read_text(encoding="utf-8"))
+    return data.get("measurement") if isinstance(data, dict) else None
 
 
 def _sample(r: EvalResult) -> Dict[str, Any]:

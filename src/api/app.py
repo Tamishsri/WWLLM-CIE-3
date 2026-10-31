@@ -34,10 +34,11 @@ from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from src.config import ROOT, load_config
-from src.services.benchmark import build_report, load_default_dataset, parse_predictions
+from src.services.benchmark import build_report, load_default_dataset, load_measurement, parse_predictions
 from src.services.capabilities import detect_capabilities
 from src.services.engines import PipelineHub, load_eval_predictions
 from src.services.files import FileStore
+from src.services.result_cache import ResultCache
 from src.services.sample import SampleLecture
 
 WEB_DIR = ROOT / "web"
@@ -122,6 +123,7 @@ def create_app(demo_pace: float = 1.0) -> Starlette:
         cfg,
         caps,
         sample,
+        ResultCache(ROOT / "data" / "cache", read_only=[sample.results_dir]),
         eval_predictions=load_eval_predictions(predictions_path),
         demo_pace=demo_pace,
     )
@@ -170,11 +172,14 @@ def create_app(demo_pace: float = 1.0) -> Starlette:
         if not found:
             return _error(404, "Unknown file id — upload the recording again.")
         record, path = found
-        return _ndjson(hub.transcribe(record, path, str(body.get("language", "Hindi"))))
+        language = sample.language if record.get("sample") else str(body.get("language", "Hindi"))
+        return _ndjson(hub.transcribe(record, path, language, fresh=bool(body.get("fresh"))))
 
     async def notes(request: Request):
         body = await _json_body(request)
-        return _ndjson(hub.notes(str(body.get("transcript", "")), body.get("title") or None))
+        return _ndjson(
+            hub.notes(str(body.get("transcript", "")), body.get("title") or None, fresh=bool(body.get("fresh")))
+        )
 
     async def quiz(request: Request):
         body = await _json_body(request)
@@ -182,13 +187,18 @@ def create_app(demo_pace: float = 1.0) -> Starlette:
             count = int(body.get("num_questions", 5))
         except (TypeError, ValueError):
             count = 5
-        return _ndjson(hub.quiz(str(body.get("transcript", "")), count))
+        return _ndjson(hub.quiz(str(body.get("transcript", "")), count, fresh=bool(body.get("fresh"))))
 
     async def translate(request: Request):
         body = await _json_body(request)
         quiz_items = body.get("quiz") if isinstance(body.get("quiz"), list) else []
         return _ndjson(
-            hub.translate(str(body.get("notes", "")), quiz_items, str(body.get("target", "Hindi")))
+            hub.translate(
+                str(body.get("notes", "")),
+                quiz_items,
+                str(body.get("target", "Hindi")),
+                fresh=bool(body.get("fresh")),
+            )
         )
 
     async def benchmark(request: Request) -> JSONResponse:
@@ -207,7 +217,7 @@ def create_app(demo_pace: float = 1.0) -> Starlette:
                     report = build_report(
                         records, payload, source="bundled", output_dir=output_dir, bertscore=bertscore
                     )
-                    report["simulated"] = bool(eval_cfg.get("simulated", False))
+                    report["measurement"] = load_measurement(predictions_path)
                     return report
 
                 t0 = time.perf_counter()

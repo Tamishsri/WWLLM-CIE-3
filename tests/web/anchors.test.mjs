@@ -6,8 +6,9 @@ import { test } from "node:test";
 import { anchorNotes, anchorQuiz, parseSections } from "../../web/assets/js/anchors.js";
 import { extractConcepts, layoutConcepts } from "../../web/assets/js/concepts.js";
 import { LectureIndex } from "../../web/assets/js/lecture.js";
+import { levelHeadings, render } from "../../web/assets/js/markdown.js";
 
-const sample = JSON.parse(readFileSync(new URL("../../data/sample/gradient_descent.json", import.meta.url), "utf8"));
+const sample = JSON.parse(readFileSync(new URL("./fixtures/gradient_descent.json", import.meta.url), "utf8"));
 
 let t = 0.6;
 const segments = sample.segments.map((text, i) => {
@@ -103,4 +104,17 @@ test("layout keeps pills inside the box without overlaps", () => {
     })
   );
   assert.equal(overlaps, 0);
+});
+
+test("notes written with deeper headings still get sections and a contents list", () => {
+  const notes = "### Title\n\n#### One\nBody\n\n#### Two\nBody";
+  assert.deepEqual(parseSections(notes).map((s) => s.heading), ["One", "Two"]);
+  assert.equal(render(notes).toc.length, 2);
+});
+
+test("heading levels: a title stays one level above its sections", () => {
+  assert.equal(levelHeadings("# Title\n\n## One"), "# Title\n\n## One");
+  assert.equal(levelHeadings("### One\n\n### Two"), "## One\n\n## Two");
+  assert.equal(levelHeadings("no headings"), "no headings");
+  assert.equal(levelHeadings(""), "");
 });

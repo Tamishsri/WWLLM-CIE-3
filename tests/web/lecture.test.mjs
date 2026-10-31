@@ -5,7 +5,7 @@ import { test } from "node:test";
 
 import { LectureIndex, retimeSegments } from "../../web/assets/js/lecture.js";
 
-const sample = JSON.parse(readFileSync(new URL("../../data/sample/gradient_descent.json", import.meta.url), "utf8"));
+const sample = JSON.parse(readFileSync(new URL("./fixtures/gradient_descent.json", import.meta.url), "utf8"));
 
 let t = 0.6;
 const segments = sample.segments.map((text, i) => {

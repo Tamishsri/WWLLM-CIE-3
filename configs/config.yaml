@@ -14,6 +14,8 @@ asr:
   # Checkpoint per source language ({iso} = hi, en, ta, kn, te, ml).
   # Add a `models:` mapping (e.g. models: {Tamil: /path/ta.nemo}) to override.
   model_template: "ai4bharat/indicconformer_stt_{iso}_hybrid_rnnt_large"
+  # Without NeMo or access to those checkpoints, open Whisper models run instead
+  # (see WHISPER_MODELS in src/pipelines/languages.py).
   batch_size: 8
   device: null  # auto-detect
 
@@ -23,15 +25,20 @@ llm:
   temperature: 0.4
   max_new_tokens_notes: 2048
   max_new_tokens_quiz: 2048
+  # Without a GPU every token costs real time, so the ceilings are lower.
+  cpu_max_new_tokens_notes: 450
+  cpu_max_new_tokens_quiz: 650
 
 translation:
   model_id: "ai4bharat/indictrans2-en-indic-1B"
+  # Used when IndicTrans2 or its toolkit isn't available.
+  open_model_id: "facebook/nllb-200-distilled-600M"
   num_beams: 5
   default_target: "hin_Deva"
 
 audio:
   max_chunk_sec: 25.0
-  min_chunk_sec: 2.0
+  min_chunk_sec: 2.0  # offline energy VAD only
   vad_threshold: 0.45
   min_silence_ms: 300
 
@@ -42,6 +49,3 @@ evaluation:
   output_dir: "outputs/evaluations"
   references: "data/ground_truth/references.json"
   predictions: "outputs/transcripts/eval_inputs.json"
-  # The bundled predictions are hand-written (generate_test_dataset.py), not
-  # model output. Set to false once they are replaced with real ASR results.
-  simulated: true

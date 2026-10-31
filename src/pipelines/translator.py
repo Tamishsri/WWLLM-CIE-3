@@ -55,6 +55,9 @@ DEFAULT_TRANS_MODEL: str = "ai4bharat/indictrans2-en-indic-1B"
 SRC_LANG: str = "eng_Latn"
 """FLORES-200 source language code (English, Latin script)."""
 
+DEFAULT_NLLB_MODEL: str = "facebook/nllb-200-distilled-600M"
+"""Open fallback: no login needed, same FLORES-200 language codes."""
+
 MAX_SEQ_LEN: int = 256
 """Maximum token sequence length per translation batch element."""
 
@@ -317,3 +320,69 @@ class TranslationEngine:
             "device": str(self.device),
             "supported_targets": ", ".join(SUPPORTED_TARGETS.keys()),
         }
+
+
+# ---------------------------------------------------------------------------
+# NLLBEngine
+# ---------------------------------------------------------------------------
+class NLLBEngine(TranslationEngine):
+    """Open translation with Meta's NLLB-200, used when IndicTrans2 is unavailable.
+
+    IndicTrans2 is gated on Hugging Face and needs IndicTransToolkit.  NLLB-200
+    needs neither and uses the same FLORES-200 language codes, so everything
+    above ``_batch_translate`` is shared.
+
+    Parameters
+    ----------
+    model_id : str
+        HuggingFace model ID.
+    device : str | None
+        ``"cuda"`` or ``"cpu"``.  Auto-detects if *None*.
+    num_beams : int
+        Beam width.  1 by default: each beam multiplies CPU time.
+    """
+
+    def __init__(
+        self,
+        model_id: str = DEFAULT_NLLB_MODEL,
+        device: Optional[str] = None,
+        num_beams: int = 1,
+    ) -> None:
+        if not _HF_AVAILABLE:
+            raise ImportError("transformers is required.  pip install transformers")
+
+        self.model_id = model_id
+        self.num_beams = num_beams
+        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+
+        logger.info(f"Loading NLLB-200: {model_id} …")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id, src_lang=SRC_LANG)
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_id).to(self.device)
+        self.model.eval()
+        logger.success(f"NLLB-200 ready on {self.device}.")
+
+    def _batch_translate(
+        self,
+        sentences: List[str],
+        target_lang: str,
+        batch_size: int,
+    ) -> List[str]:
+        target_id = self.tokenizer.convert_tokens_to_ids(target_lang)
+        translated: List[str] = []
+        for i in range(0, len(sentences), batch_size):
+            inputs = self.tokenizer(
+                sentences[i : i + batch_size],
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=MAX_SEQ_LEN,
+            ).to(self.device)
+            with torch.no_grad():
+                generated = self.model.generate(
+                    **inputs,
+                    forced_bos_token_id=target_id,
+                    num_beams=self.num_beams,
+                    max_length=MAX_SEQ_LEN,
+                )
+            translated.extend(self.tokenizer.batch_decode(generated, skip_special_tokens=True))
+        return translated

@@ -21,13 +21,14 @@ from loguru import logger
 
 STAGE_REQUIREMENTS: Dict[str, List[str]] = {
     "vad": ["torch", "torchaudio", "silero_vad"],
-    "asr": ["torch", "torchaudio", "silero_vad", "nemo"],
+    "asr": ["torch", "torchaudio", "silero_vad", "transformers"],
     "llm": ["torch", "transformers", "accelerate"],
-    "mt": ["torch", "transformers", "IndicTransToolkit"],
+    "mt": ["torch", "transformers", "sentencepiece"],
 }
-"""Python modules each stage needs to run its real model."""
+"""Python modules each stage needs to run a real model."""
 
-_OPTIONAL = ["bitsandbytes", "pydub", "jiwer", "bert_score", "rouge_score"]
+_OPTIONAL = ["nemo", "IndicTransToolkit", "bitsandbytes", "jiwer", "bert_score", "rouge_score"]
+"""Modules that upgrade a stage: IndicConformer and IndicTrans2 replace the open models."""
 
 
 def _has_module(name: str) -> bool:

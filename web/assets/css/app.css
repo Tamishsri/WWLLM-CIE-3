@@ -2171,6 +2171,9 @@ kbd {
   grid-template-columns: 1.35fr repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
+.kpis-four {
+  grid-template-columns: 1.35fr repeat(3, minmax(0, 1fr));
+}
 .kpi {
   padding: 18px 20px;
   display: grid;
@@ -3721,6 +3724,34 @@ body.theatre-open {
   font-weight: 500;
   color: rgba(243, 241, 234, 0.38);
 }
+.t-now.said {
+  color: #fff;
+}
+.t-caption {
+  transition: opacity 0.6s var(--ease);
+}
+.theatre.finished .t-caption {
+  opacity: 0;
+}
+.t-finale {
+  position: absolute;
+  left: 50%;
+  bottom: 92px;
+  transform: translateX(-50%);
+  width: min(760px, calc(100vw - 40px));
+  margin: 0;
+  text-align: center;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: clamp(20px, 2.2vw, 30px);
+  color: rgba(243, 241, 234, 0.9);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.8s var(--ease) 0.3s;
+}
+.theatre.finished .t-finale {
+  opacity: 1;
+}
 .t-w {
   transition: color 0.16s;
 }
@@ -3896,4 +3927,24 @@ body.theatre-open {
 .bench,
 .detail {
   grid-template-columns: minmax(0, 1fr);
+}
+
+/* Big screens and projectors: use the room, keep the hero in the middle */
+.hero {
+  min-height: calc(100vh - 200px);
+  align-content: center;
+}
+@media (min-width: 1600px) {
+  :root {
+    --container: 1560px;
+  }
+  body {
+    font-size: 16px;
+  }
+  .lede {
+    font-size: 19px;
+  }
+  .dz-title {
+    font-size: 22px;
+  }
 }

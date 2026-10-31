@@ -4,8 +4,8 @@ llm_engine.py — BharatGen Param1 Summarisation & Quiz Generation
 Wraps the ``bharatgenai/Param-1-2.9B-Instruct`` decoder-only causal LM
 with structured prompting for:
     1. **Lecture Notes Generation** — zero-shot markdown-structured notes.
-    2. **MCQ Quiz Generation** — few-shot prompt enforcing strict JSON
-       output for easy UI rendering.
+    2. **MCQ Quiz Generation** — one-shot prompt with a fixed plain format,
+       parsed into the canonical quiz schema.
 
 Memory Optimisation
 -------------------
@@ -14,6 +14,11 @@ Memory Optimisation
   model within ~6 GB VRAM.
 * ``device_map="auto"`` lets ``accelerate`` shard across available
   GPUs or spill to CPU RAM.
+* On CPU the checkpoint's own bf16 weights load directly (about 6 GB of RAM).
+
+The quiz is written in a plain ``Q: / A) / Answer: / Why:`` format rather than
+JSON: Param-1 follows it far more reliably, and a reply cut off by the token
+limit loses one question instead of the whole quiz.
 
 Usage::
 
@@ -22,13 +27,15 @@ Usage::
     for piece in engine.stream_notes(transcript):   # token streaming for UIs
         print(piece, end="")
     quiz_json = engine.generate_quiz(transcript, num_questions=5)
+    raw = "".join(engine.stream_quiz(transcript, 5))    # or stream the raw JSON
+    quiz_json = engine.parse_quiz(raw)
 """
 
 from __future__ import annotations
 
 import json
 import re
-from threading import Thread
+from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional
 
 import torch
@@ -38,10 +45,14 @@ from src.pipelines.quiz_schema import normalise_quiz
 
 try:
     from transformers import (
+        AutoConfig,
         AutoModelForCausalLM,
         AutoTokenizer,
         BitsAndBytesConfig,
-        TextIteratorStreamer,
+        LogitsProcessorList,
+        RepetitionPenaltyLogitsProcessor,
+        TemperatureLogitsWarper,
+        TopPLogitsWarper,
     )
 
     _TRANSFORMERS_AVAILABLE = True
@@ -60,6 +71,9 @@ MAX_NEW_TOKENS_NOTES: int = 2048
 MAX_NEW_TOKENS_QUIZ: int = 2048
 """Maximum generation length for MCQ quiz output."""
 
+TOP_P: float = 0.9
+REPETITION_PENALTY: float = 1.15
+
 
 # ---------------------------------------------------------------------------
 # Prompt Templates
@@ -75,27 +89,46 @@ produce well-structured **Markdown** lecture notes. Follow these rules:
 5. Include a **## Key Takeaways** section at the end with 3-5 bullet points.
 6. Do NOT add information that is not present in the transcript.
 7. Preserve technical accuracy — do not paraphrase formulas or proper nouns.
+8. Write in English, whatever language the transcript is in.
 """
 
 SYSTEM_PROMPT_QUIZ: str = """\
-You are a quiz-generation assistant. Given a lecture transcript, generate \
-exactly {num_questions} multiple-choice questions (MCQs) that test \
-understanding of the key concepts.
-
-**Output format**: Return ONLY a valid JSON array. Each element must be:
-{{
-  "question": "<question text>",
-  "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
-  "correct_answer": "<full text of correct option>",
-  "explanation": "<1-2 sentence explanation>"
-}}
-
-Rules:
-- Each question must have exactly 4 options labelled A–D.
-- Distractors should be plausible but clearly incorrect.
-- Questions should cover different parts of the lecture.
-- Output ONLY the JSON array — no preamble, no markdown fences.
+You are a quiz-generation assistant. You write multiple-choice questions about \
+the lecture you are given, in English, whatever language the lecture is in.
 """
+
+# The task comes after the transcript, and the format has no worked example:
+# Param-1 copies a worked example instead of writing about the lecture.
+USER_PROMPT_QUIZ: str = """\
+Lecture transcript:
+
+{transcript}
+
+Write {num_questions} multiple-choice questions that test understanding of this \
+lecture. Cover different parts of it. Use this format for each question:
+
+Q1: the question
+A) first option
+B) second option
+C) third option
+D) fourth option
+Answer: the letter of the correct option
+Why: one sentence explaining the answer
+"""
+
+_QUESTION_RE = re.compile(r"^\s*Q\d*[:.)]\s*", re.MULTILINE)
+_OPTION_RE = re.compile(r"^[A-Ha-h][).:]\s")
+_ANSWER_RE = re.compile(r"^(?:correct\s+)?answer\s*[:\-]\s*(.+)", re.IGNORECASE)
+_WHY_RE = re.compile(r"^(?:why|explanation)\s*[:\-]\s*(.+)", re.IGNORECASE)
+
+
+@dataclass
+class _Reply:
+    """A reply in progress: every token so far, and those the model hasn't read."""
+
+    sequence: torch.Tensor
+    unread: torch.Tensor
+    past: Any = None
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +147,8 @@ class LLMEngine:
         Accelerate device map strategy.  ``"auto"`` is recommended.
     temperature : float
         Sampling temperature.  Lower → more deterministic.
+    max_new_tokens_notes, max_new_tokens_quiz : int
+        Length ceilings.  Lower them on CPU, where each token costs real time.
     """
 
     def __init__(
@@ -122,6 +157,8 @@ class LLMEngine:
         quantize_8bit: bool = True,
         device_map: str = "auto",
         temperature: float = 0.4,
+        max_new_tokens_notes: int = MAX_NEW_TOKENS_NOTES,
+        max_new_tokens_quiz: int = MAX_NEW_TOKENS_QUIZ,
     ) -> None:
         if not _TRANSFORMERS_AVAILABLE:
             raise ImportError(
@@ -131,6 +168,8 @@ class LLMEngine:
 
         self.model_id = model_id
         self.temperature = temperature
+        self.max_new_tokens_notes = max_new_tokens_notes
+        self.max_new_tokens_quiz = max_new_tokens_quiz
 
         # ── Quantisation config ─────────────────────────────────────────
         quant_config: Optional[BitsAndBytesConfig] = None
@@ -152,15 +191,40 @@ class LLMEngine:
 
         # ── Load model ──────────────────────────────────────────────────
         logger.info(f"Loading LLM: {model_id} …")
+        # fp16 is GPU-only in practice.  On CPU, keep the checkpoint's bf16 and
+        # skip device_map, which would offload layers to disk when RAM is tight.
+        cuda = torch.cuda.is_available()
+        config = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
+        rope = getattr(config, "rope_scaling", None)
+        if isinstance(rope, dict) and "type" not in rope:
+            # transformers 5 fills this in with defaults, and Param-1's remote
+            # code reads any non-empty value as a scaling request.
+            config.rope_scaling = None
         self.model = AutoModelForCausalLM.from_pretrained(
             model_id,
+            config=config,
             quantization_config=quant_config,
-            device_map=device_map,
+            device_map=device_map if cuda else None,
             trust_remote_code=True,
-            torch_dtype=torch.float16,
+            torch_dtype=torch.float16 if cuda else torch.bfloat16,
+            low_cpu_mem_usage=True,
         )
         self.model.eval()
+        self._rebuild_rotary_tables()
         logger.success(f"LLM ready — {model_id}")
+
+    def _rebuild_rotary_tables(self) -> None:
+        """Recompute Param-1's rotary position tables.
+
+        They aren't stored in the checkpoint, and transformers 5 builds models
+        without real memory first, so they load uninitialised.  The weights are
+        fine but the model loses all sense of word order and writes gibberish.
+        """
+        for module in self.model.modules():
+            if hasattr(module, "_set_cos_sin_cache"):
+                steps = torch.arange(0, module.dim, 2).float()
+                module.inv_freq = (1.0 / (module.base ** (steps / module.dim))).to(module.inv_freq.device)
+                module._set_cos_sin_cache(module.max_seq_len_cached, module.inv_freq.device, torch.float32)
 
     # ------------------------------------------------------------------
     # Public API
@@ -181,20 +245,20 @@ class LLMEngine:
         if not transcript.strip():
             return "_No transcript provided._"
         return self._generate(
-            self._notes_messages(transcript), max_new_tokens=MAX_NEW_TOKENS_NOTES
+            self._notes_messages(transcript), max_new_tokens=self.max_new_tokens_notes
         )
 
     def stream_notes(self, transcript: str) -> Iterator[str]:
         """Yield the notes as they are generated (decoded text pieces).
 
-        Uses ``TextIteratorStreamer`` with generation running in a worker
-        thread, so callers can forward tokens to a UI in real time.
+        Callers can forward the pieces to a UI in real time; closing this
+        generator stops the model.
         """
         if not transcript.strip():
             yield "_No transcript provided._"
             return
         yield from self._generate_stream(
-            self._notes_messages(transcript), max_new_tokens=MAX_NEW_TOKENS_NOTES
+            self._notes_messages(transcript), max_new_tokens=self.max_new_tokens_notes
         )
 
     def _notes_messages(self, transcript: str) -> List[Dict[str, str]]:
@@ -228,18 +292,37 @@ class LLMEngine:
         """
         if not transcript.strip():
             return []
+        return self.parse_quiz("".join(self.stream_quiz(transcript, num_questions)))
 
+    def stream_quiz(self, transcript: str, num_questions: int = 5) -> Iterator[str]:
+        """Yield the quiz's raw text as it is generated, stopping after *num_questions*."""
         truncated = self._truncate_to_tokens(transcript, max_tokens=2400)
 
-        system = SYSTEM_PROMPT_QUIZ.format(num_questions=num_questions)
         messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": f"Transcript:\n\n{truncated}"},
+            {"role": "system", "content": SYSTEM_PROMPT_QUIZ},
+            {"role": "user", "content": USER_PROMPT_QUIZ.format(transcript=truncated, num_questions=num_questions)},
         ]
-        raw_output = self._generate(messages, max_new_tokens=MAX_NEW_TOKENS_QUIZ)
+        # Param-1 stops after one question, so each one is started for it.  The
+        # reply carries on, so the transcript is only read once.
+        input_ids = self._encode(messages)
+        reply = _Reply(input_ids, input_ids)
+        budget = self.max_new_tokens_quiz // num_questions
+        for number in range(1, num_questions + 1):
+            question = ""
+            for piece in self._continue(reply, f"Q{number}:" if number == 1 else f"\n\nQ{number}:", budget):
+                question += piece
+                yield piece
+            if "Why:" not in question:
+                yield from self._continue(reply, "\nWhy:", budget // 3)
 
-        # ── Parse JSON from LLM output, then validate the answer keys ──
-        return normalise_quiz(self._parse_quiz_json(raw_output))
+    @staticmethod
+    def count_questions(raw: str) -> int:
+        """How many questions a quiz reply has started so far."""
+        return len(_QUESTION_RE.findall(raw))
+
+    def parse_quiz(self, raw: str) -> List[Dict[str, Any]]:
+        """Parse the model's reply, then validate the answer keys."""
+        return normalise_quiz(self._parse_quiz_text(raw) or self._parse_quiz_json(raw.strip()))
 
     # ------------------------------------------------------------------
     # Inference
@@ -249,10 +332,7 @@ class LLMEngine:
         messages: List[Dict[str, str]],
         max_new_tokens: int,
     ) -> str:
-        """Run chat-style generation.
-
-        Uses the tokenizer's ``apply_chat_template`` for proper
-        formatting with BharatGen's expected control tokens.
+        """Run chat-style generation and return the assistant's reply.
 
         Parameters
         ----------
@@ -266,42 +346,76 @@ class LLMEngine:
         str
             Decoded model output (assistant reply only).
         """
-        input_ids = self._encode(messages)
-        input_length = input_ids.shape[1]
-
-        with torch.no_grad():
-            output_ids = self.model.generate(
-                input_ids, **self._sampling_kwargs(max_new_tokens)
-            )
-
-        # Decode only the newly generated tokens (skip input prompt)
-        generated = output_ids[0, input_length:]
-        return self.tokenizer.decode(generated, skip_special_tokens=True).strip()
+        return "".join(self._generate_stream(messages, max_new_tokens)).strip()
 
     def _generate_stream(
         self,
         messages: List[Dict[str, str]],
         max_new_tokens: int,
     ) -> Iterator[str]:
-        """Streaming variant of :meth:`_generate`."""
-        streamer = TextIteratorStreamer(
-            self.tokenizer, skip_prompt=True, skip_special_tokens=True
-        )
-        kwargs = dict(
-            input_ids=self._encode(messages),
-            streamer=streamer,
-            **self._sampling_kwargs(max_new_tokens),
-        )
-        worker = Thread(target=self._generate_no_grad, kwargs=kwargs, daemon=True)
-        worker.start()
-        for piece in streamer:
-            if piece:
-                yield piece
-        worker.join()
+        """Yield the reply as it is generated.
 
-    def _generate_no_grad(self, **kwargs: Any) -> None:
+        Closing the generator stops the model, which is how the UI's Stop
+        button works.
+        """
+        input_ids = self._encode(messages)
+        yield from self._decode(self._sample(_Reply(input_ids, input_ids), max_new_tokens))
+
+    def _continue(self, reply: _Reply, opening: str, max_new_tokens: int) -> Iterator[str]:
+        """Write *opening* into *reply*, then let the model carry on from it."""
+        ids = self.tokenizer(opening, add_special_tokens=False, return_tensors="pt").input_ids
+        ids = ids.to(reply.sequence.device)
+        reply.sequence = torch.cat([reply.sequence, ids], dim=-1)
+        reply.unread = torch.cat([reply.unread, ids], dim=-1)
+        yield opening
+        # The format repeats on purpose, so repetition isn't penalised here.
+        yield from self._decode(self._sample(reply, max_new_tokens, repetition_penalty=1.0))
+
+    def _decode(self, tokens: Iterator[int]) -> Iterator[str]:
+        """Turn token ids into text pieces as they arrive."""
+        seen: List[int] = []
+        sent = 0
+        for token in tokens:
+            seen.append(token)
+            text = self.tokenizer.decode(seen, skip_special_tokens=True)
+            if len(text) > sent and not text.endswith("\ufffd"):  # U+FFFD: a character split across tokens
+                yield text[sent:]
+                sent = len(text)
+
+    def _sample(
+        self,
+        reply: _Reply,
+        max_new_tokens: int,
+        repetition_penalty: float = REPETITION_PENALTY,
+    ) -> Iterator[int]:
+        """Yield new token ids one at a time, keeping *reply* up to date.
+
+        Param-1's remote code keeps its key/value cache as tuples, which
+        ``generate()`` in current transformers can't drive.  Without the cache
+        every token re-runs the whole prompt, so this loop carries it instead.
+        """
+        processors = LogitsProcessorList(
+            [
+                RepetitionPenaltyLogitsProcessor(repetition_penalty),
+                TemperatureLogitsWarper(self.temperature),
+                TopPLogitsWarper(TOP_P),
+            ]
+        )
+        eos = self.tokenizer.eos_token_id
         with torch.no_grad():
-            self.model.generate(**kwargs)
+            for _ in range(max_new_tokens):
+                out = self.model(
+                    input_ids=reply.unread, past_key_values=reply.past, use_cache=True, return_dict=True
+                )
+                reply.past = out.past_key_values
+                scores = processors(reply.sequence, out.logits[:, -1, :].float())
+                token = torch.multinomial(scores.softmax(dim=-1), num_samples=1)
+                if token.item() == eos:
+                    reply.unread = token[:, :0]
+                    return
+                reply.sequence = torch.cat([reply.sequence, token], dim=-1)
+                reply.unread = token
+                yield token.item()
 
     def _encode(self, messages: List[Dict[str, str]]) -> torch.Tensor:
         """Apply the chat template and return ``input_ids`` on the model device.
@@ -316,16 +430,6 @@ class LLMEngine:
         )
         input_ids = encoded["input_ids"] if hasattr(encoded, "keys") else encoded
         return input_ids.to(self.model.device)
-
-    def _sampling_kwargs(self, max_new_tokens: int) -> Dict[str, Any]:
-        return dict(
-            max_new_tokens=max_new_tokens,
-            do_sample=True,
-            temperature=self.temperature,
-            top_p=0.9,
-            repetition_penalty=1.15,
-            pad_token_id=self.tokenizer.pad_token_id,
-        )
 
     # ------------------------------------------------------------------
     # Helpers
@@ -354,6 +458,26 @@ class LLMEngine:
         return self.tokenizer.decode(
             token_ids[:max_tokens], skip_special_tokens=True
         )
+
+    @staticmethod
+    def _parse_quiz_text(raw: str) -> List[Dict[str, Any]]:
+        """Read the ``Q: / A) / Answer: / Why:`` format into MCQ dicts."""
+        items: List[Dict[str, Any]] = []
+        for block in _QUESTION_RE.split(raw)[1:]:
+            lines = [line.strip() for line in block.splitlines() if line.strip()]
+            if not lines:
+                continue
+            item: Dict[str, Any] = {"question": lines[0], "options": []}
+            for line in lines[1:]:
+                answer, why = _ANSWER_RE.match(line), _WHY_RE.match(line)
+                if _OPTION_RE.match(line):
+                    item["options"].append(line)
+                elif answer:
+                    item["correct_answer"] = answer.group(1)
+                elif why:
+                    item["explanation"] = why.group(1)
+            items.append(item)
+        return items
 
     @staticmethod
     def _parse_quiz_json(raw: str) -> List[Dict[str, Any]]:

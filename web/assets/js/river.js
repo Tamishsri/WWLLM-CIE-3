@@ -16,6 +16,11 @@ const SCRIPTS = [
   "abcdefghijklmnopqrstuvwxyz",
 ];
 
+const FONT_FAMILIES = [
+  "Noto Sans Devanagari", "Noto Sans Tamil", "Noto Sans Kannada", "Noto Sans Telugu", "Noto Sans Malayalam",
+  "Noto Sans Bengali", "Noto Sans Gujarati", "Noto Sans Gurmukhi", "Noto Sans Oriya", "Geist",
+];
+
 const RIBBONS = [
   { base: 0.5, amp: 0.22, freq: 1.7, speed: 1, size: 19, token: "--accent-text", alpha: 0.75 },
   { base: 0.56, amp: 0.3, freq: 1.2, speed: 0.72, size: 15, token: "--indigo", alpha: 0.5 },
@@ -59,6 +64,8 @@ export class GlyphRiver {
     addEventListener("resize", this.onResize);
     addEventListener("pointermove", this.onMove, { passive: true });
     this.resize();
+    // Canvas text doesn't trigger web-font loading the way the DOM does.
+    SCRIPTS.forEach((chars, i) => document.fonts?.load(`16px "${FONT_FAMILIES[i]}"`, chars));
     if (this.reduced) this.draw(0);
     else this.raf = requestAnimationFrame((t) => this.frame(t));
   }

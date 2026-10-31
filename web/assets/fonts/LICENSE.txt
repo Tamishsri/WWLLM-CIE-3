@@ -1,0 +1,4 @@
+These fonts are distributed under the SIL Open Font License 1.1
+(https://openfontlicense.org): Geist, Geist Mono, Instrument Serif and the
+Noto Sans families for Devanagari, Tamil, Kannada, Telugu, Malayalam,
+Bengali, Gujarati, Gurmukhi and Oriya. Files were obtained from Google Fonts.

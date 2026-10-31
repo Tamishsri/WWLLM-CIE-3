@@ -1,0 +1,17 @@
+{
+  "translations": [
+    "Hindi",
+    "Tamil",
+    "Kannada",
+    "Telugu",
+    "Malayalam",
+    "Bengali",
+    "Marathi",
+    "Gujarati",
+    "Punjabi",
+    "Odia"
+  ],
+  "asr_model": "vasista22/whisper-hindi-small",
+  "asr_wer": 0.2685,
+  "date": "2026-10-31"
+}

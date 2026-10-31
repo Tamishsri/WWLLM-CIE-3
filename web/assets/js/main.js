@@ -76,6 +76,11 @@ const STAGE_META = {
 };
 
 function paintPill() {
+  const footer = document.getElementById("footerEngines");
+  if (footer && status) {
+    const s = status.stages;
+    footer.textContent = `WWLLM v2 · ${s.vad.name} · ${s.asr.name} · ${s.llm.name} · ${s.mt.name}`;
+  }
   const label = pill.querySelector(".pill-label");
   if (!status) {
     pill.dataset.mode = "offline";
@@ -110,7 +115,7 @@ function openEngines() {
     .map(([key, s]) => {
       const meta = STAGE_META[key];
       const detail = s.live
-        ? `Loads on first use · <code>${esc(s.model)}</code>`
+        ? `Loads on first use · <code>${esc(s.model)}</code>${s.note ? `<br>${esc(s.note)}` : ""}`
         : `Missing <code>${esc(s.missing.join(", ") || "—")}</code> → ${esc(s.fallback)}`;
       return `<div class="engine-row"><span class="step-badge">${icon(meta.icon, "icon-sm")}</span>
           <div><h4>${esc(s.name)} <span class="muted" style="font-weight:400">· ${meta.label}</span></h4><p>${detail}</p></div>
@@ -119,18 +124,18 @@ function openEngines() {
     .join("");
 
   const sentence = {
-    live: "Every stage runs its real AI4Bharat / BharatGen model.",
+    live: "Every stage runs a real model on this machine.",
     hybrid: "Some stages run real models; the rest use offline fallbacks.",
     demo: status.forced_demo
-      ? "Demo mode was forced with --demo — every stage uses its offline engine."
-      : "The ML stack isn't installed here, so each stage uses an offline engine. The sample lecture shows the full experience.",
+      ? "Demo mode was forced with --demo: stored results and offline engines only."
+      : "The ML stack isn't installed here, so stages use stored results and offline engines. The sample lecture still shows real model output.",
   }[status.mode];
 
   const install =
     status.mode === "live"
       ? ""
       : `<div class="callout is-info">${icon("info")}<div class="callout-body"><strong>Run the real models</strong>
-          <span>Install the full stack (PyTorch, the AI4Bharat NeMo fork, Transformers, IndicTransToolkit — see README), then restart <code>python server.py</code>. Each stage switches to its live model automatically.</span></div></div>`;
+          <span>Install <code>requirements.txt</code> (see README), then restart <code>python server.py</code>. Each stage switches to its real model automatically.</span></div></div>`;
 
   dlg.innerHTML = `
     <div class="sheet-head"><div><h2 id="enginesTitle">Engines</h2><p>${sentence}</p></div>

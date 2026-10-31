@@ -244,9 +244,19 @@ _STOPWORDS = set(
 )
 
 
+_UNPUNCTUATED_WORDS = 16
+
+
 def split_sentences(text: str) -> List[str]:
-    """Split on sentence punctuation (incl. the Devanagari danda) and newlines."""
-    return [s.strip() for s in _SENTENCE_RE.split(text) if s and len(s.strip()) > 1]
+    """Split on sentence punctuation (incl. the Devanagari danda) and newlines.
+
+    ASR output can have no punctuation at all; then it splits every few words.
+    """
+    sentences = [s.strip() for s in _SENTENCE_RE.split(text) if s and len(s.strip()) > 1]
+    if len(sentences) == 1 and len(sentences[0].split()) > 2 * _UNPUNCTUATED_WORDS:
+        words = sentences[0].split()
+        return [" ".join(words[i : i + _UNPUNCTUATED_WORDS]) for i in range(0, len(words), _UNPUNCTUATED_WORDS)]
+    return sentences
 
 
 def tokenize(text: str) -> List[str]:

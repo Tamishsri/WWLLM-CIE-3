@@ -41,7 +41,7 @@ function render() {
   root.innerHTML = `
     <section class="bench">
       ${headHTML()}
-      <div class="kpis rise" style="--i:1">${kpisHTML()}</div>
+      <div class="kpis ${report.summary.rougeL == null ? "kpis-four" : ""} rise" style="--i:1">${kpisHTML()}</div>
       <div class="chart-card card rise" style="--i:2" id="werCard">
         <div class="chart-head"><h3>Word error rate per lecture</h3>
           <p>${plural(s.evaluated, "lecture")} in dataset order, grouped by course module</p>
@@ -100,15 +100,18 @@ function headHTML() {
         <button class="btn" data-b="csv" ${s.failures ? "" : "disabled"}>${icon("download", "icon-sm")}Failures CSV</button>
       </div>
     </div>
-    ${
-      report.simulated
-        ? `<div class="callout is-warn rise" style="--i:1">${icon("alert")}<div class="callout-body">
-            <strong>This bundled set is simulated — it is not a measurement of IndicConformer.</strong>
-            <span>The predictions are hand-written in <code>generate_test_dataset.py</code> and the audio clips are synthetic tones.
-            It demonstrates the evaluation pipeline. To measure the real model, run it on real recordings and use “Evaluate your own set”.</span>
-          </div></div>`
-        : ""
-    }`;
+    ${measurementHTML()}`;
+}
+
+function measurementHTML() {
+  const m = report.measurement;
+  if (!m) return "";
+  const models = [...new Set(Object.values(m.asr_models || {}))].map((id) => `<code>${esc(id)}</code>`).join(", ");
+  return `<div class="callout is-info rise" style="--i:1">${icon("info")}<div class="callout-body">
+      <strong>Measured with real models, on clean machine-read speech.</strong>
+      <span>${esc(m.speech)}, then Silero-VAD and ${models} transcribed it${m.date ? ` on ${esc(m.date)}` : ""}.
+      Real classrooms, with echo, noise and code-switching, will score worse. To measure those, use “Evaluate your own set”.</span>
+    </div></div>`;
 }
 
 function kpisHTML() {
@@ -137,11 +140,15 @@ function kpisHTML() {
       <span class="kpi-value">${pct(s.word_accuracy)}</span>
       <span class="kpi-sub">${fmtNum(s.totals.hits)} of ${fmtNum(s.totals.ref_words)} reference words</span>
     </div>
-    <div class="kpi card">
+    ${
+      s.rougeL == null
+        ? ""
+        : `<div class="kpi card">
       <span class="kpi-label">Summary ROUGE-L</span>
       <span class="kpi-value">${fixed(s.rougeL, 3)}</span>
       <span class="kpi-sub">${m.rouge === "built-in" ? "built-in ROUGE" : "rouge-score"} · ${bert}</span>
-    </div>`;
+    </div>`
+    }`;
 }
 
 function compositionHTML() {
@@ -373,16 +380,18 @@ function tableToolsHTML() {
         <option value="all">All languages</option>
         ${langs.map((l) => `<option value="${esc(l)}" ${view.lang === l ? "selected" : ""}>${esc(l)}</option>`).join("")}
       </select>
-      <label class="search">${icon("search", "icon-sm")}<input type="search" data-b="q" placeholder="Search lectures, conditions, words…" value="${esc(view.q)}" aria-label="Search lectures"></label>
+      <label class="search">${icon("search", "icon-sm")}<input type="search" data-b="q" placeholder="Search lectures, words…" value="${esc(view.q)}" aria-label="Search lectures"></label>
     </div>`;
 }
+
+const hasConditions = () => report.samples.some((s) => s.condition);
 
 function theadHTML() {
   const col = (key, label, cls = "") => {
     const sorted = view.sort.key === key;
     return `<th class="${cls}"><button type="button" data-b="sort" data-value="${key}" class="${sorted ? "sorted" : ""}">${label}${icon("sort", "icon-sm")}</button></th>`;
   };
-  return `<tr>${col("number", "#")}${col("title", "Lecture")}${col("language", "Language")}<th>Recording condition</th>${col("wer", "WER", "num")}<th class="num">Sub · Del · Ins</th><th>Status</th></tr>`;
+  return `<tr>${col("number", "#")}${col("title", "Lecture")}${col("language", "Language")}${hasConditions() ? "<th>Recording condition</th>" : ""}${col("wer", "WER", "num")}<th class="num">Sub · Del · Ins</th><th>Status</th></tr>`;
 }
 
 function visibleSamples() {
@@ -403,7 +412,8 @@ function visibleSamples() {
 
 function tbodyHTML() {
   const rows = visibleSamples();
-  if (!rows.length) return `<tr><td colspan="7" class="muted" style="padding:28px;text-align:center">No lectures match these filters.</td></tr>`;
+  const columns = hasConditions() ? 7 : 6;
+  if (!rows.length) return `<tr><td colspan="${columns}" class="muted" style="padding:28px;text-align:center">No lectures match these filters.</td></tr>`;
   const t = report.threshold;
   return rows
     .map((s) => {
@@ -416,12 +426,12 @@ function tbodyHTML() {
           <td><span class="lec-num">${s.number ?? ""}</span></td>
           <td><div class="lec-title">${esc(s.title)}</div><div class="cond">${esc(s.domain)}</div></td>
           <td>${esc(s.language)}</td>
-          <td><div class="cond" title="${esc(s.condition)}">${esc(s.condition || "—")}</div></td>
+          ${columns === 7 ? `<td><div class="cond" title="${esc(s.condition)}">${esc(s.condition || "—")}</div></td>` : ""}
           <td class="num">${werCell}</td>
           <td class="num"><span class="sdi"><b>${s.substitutions}</b> · <b>${s.deletions}</b> · <b>${s.insertions}</b></span></td>
           <td><span class="status ${s.status}">${icon(STATUS_ICON[s.status])}${STATUS_LABEL[s.status]}</span></td>
         </tr>`;
-      return open ? row + detailHTML(s) : row;
+      return open ? row + detailHTML(s, columns) : row;
     })
     .join("");
 }
@@ -440,7 +450,7 @@ function diffHTML(alignment) {
     .join(" ");
 }
 
-function detailHTML(s) {
+function detailHTML(s, columns) {
   const summary =
     s.summary_ref && s.summary_pred
       ? `<div class="summary-pair"><h4>Summary · ROUGE-1 ${fixed(s.rouge1, 3)} · ROUGE-2 ${fixed(s.rouge2, 3)} · ROUGE-L ${fixed(s.rougeL, 3)}${
@@ -448,7 +458,7 @@ function detailHTML(s) {
         }</h4>
           <p><b>Reference</b> ${esc(s.summary_ref)}</p><p><b>Generated</b> ${esc(s.summary_pred)}</p></div>`
       : "";
-  return `<tr class="detail-row"><td colspan="7"><div class="detail">
+  return `<tr class="detail-row"><td colspan="${columns}"><div class="detail">
       <div class="mini-metrics">
         <span class="chip">WER <b>&nbsp;${fixed(s.wer, 3)}</b></span>
         <span class="chip">${s.ref_words} reference words</span>

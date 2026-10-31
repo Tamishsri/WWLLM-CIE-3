@@ -3,24 +3,24 @@ app.py — Streamlit Entry Point
 =============================================================================
 WWLLM: Multilingual Lecture-to-Notes & Quiz Generator
 
-Classic Streamlit UI. Needs the full ML stack; for the web studio, which also
-runs offline, use ``python server.py``.
+Classic Streamlit UI. Needs the ML stack; the web studio (``python server.py``)
+also replays stored results and works offline.
 
 Launch:  streamlit run app.py
 
 Architecture:
     1. Audio upload → VAD chunking (``AudioProcessor``)
-    2. ASR transcription (``ASREngine`` — IndicConformer)
+    2. ASR transcription (IndicConformer, or Whisper when it isn't available)
     3. LLM summarisation + quiz generation (``LLMEngine`` — BharatGen Param-1)
-    4. Translation into Hindi / Tamil / Kannada (``TranslationEngine`` — IndicTrans2)
+    4. Translation into Indian languages (IndicTrans2, or NLLB-200 when it isn't available)
 
 Session State Keys (prevent re-running ML models on UI interactions):
     • ``audio_chunks``    — list[torch.Tensor]  from VAD
     • ``transcript``      — str                 from ASR
     • ``notes_md``        — str                 from LLM
     • ``quiz_json``       — list[dict]           from LLM
-    • ``translated_notes``— str                 from IndicTrans2
-    • ``translated_quiz`` — list[dict]           from IndicTrans2
+    • ``translated_notes``— str                 from the translator
+    • ``translated_quiz`` — list[dict]           from the translator
     • ``models_loaded``   — bool                flag
 """
 
@@ -40,6 +40,7 @@ from src.config import load_config as read_config
 from src.pipelines.languages import ASR_LANGUAGES, SUPPORTED_TARGETS
 from src.services.benchmark import parse_predictions
 from src.services.capabilities import detect_capabilities
+from src.services.engines import build_asr, build_llm, build_translator
 from src.ui.styles import inject_css
 
 # ── Page configuration (MUST be the first Streamlit call) ──────────────────
@@ -72,7 +73,7 @@ def get_capabilities():
 CFG = load_config()
 CAPS = get_capabilities()
 INSTALL_HINT = (
-    "isn't installed in this environment. Install the full stack (see README), "
+    "isn't available in this environment. Install the ML stack (see README), "
     "or run `python server.py` for the web studio, which works offline."
 )
 
@@ -88,51 +89,27 @@ def get_audio_processor():
     audio_cfg = CFG.get("audio", {})
     return AudioProcessor(
         max_chunk_sec=audio_cfg.get("max_chunk_sec", 25.0),
-        min_chunk_sec=audio_cfg.get("min_chunk_sec", 2.0),
         vad_threshold=audio_cfg.get("vad_threshold", 0.45),
         min_silence_ms=audio_cfg.get("min_silence_ms", 300),
     )
 
 
-@st.cache_resource(show_spinner="Loading IndicConformer ASR model…", max_entries=1)
+@st.cache_resource(show_spinner="Loading the speech recognition model…", max_entries=1)
 def get_asr_engine(language: str = "Hindi"):
-    """Instantiate ASREngine for *language* (one checkpoint kept in memory)."""
-    from src.pipelines.asr_engine import ASREngine
-
-    asr_cfg = CFG.get("asr", {})
-    template = asr_cfg.get(
-        "model_template", "ai4bharat/indicconformer_stt_{iso}_hybrid_rnnt_large"
-    )
-    return ASREngine(
-        model_id=template.format(iso=ASR_LANGUAGES.get(language, "hi")),
-        device=asr_cfg.get("device"),
-        batch_size=asr_cfg.get("batch_size", 8),
-    )
+    """IndicConformer or Whisper for *language* (one checkpoint kept in memory)."""
+    return build_asr(CFG, CAPS, language)
 
 
-@st.cache_resource(show_spinner="Loading BharatGen Param-1 LLM (8-bit)…")
+@st.cache_resource(show_spinner="Loading BharatGen Param-1…")
 def get_llm_engine():
     """Instantiate LLMEngine (BharatGen Param-1). Cached as a singleton."""
-    from src.pipelines.llm_engine import LLMEngine
-
-    llm_cfg = CFG.get("llm", {})
-    return LLMEngine(
-        model_id=llm_cfg.get("model_id", "bharatgenai/Param-1-2.9B-Instruct"),
-        quantize_8bit=llm_cfg.get("quantize_8bit", True),
-        temperature=llm_cfg.get("temperature", 0.4),
-    )
+    return build_llm(CFG, CAPS)
 
 
-@st.cache_resource(show_spinner="Loading IndicTrans2 Translation model…")
+@st.cache_resource(show_spinner="Loading the translation model…")
 def get_translation_engine():
-    """Instantiate TranslationEngine (IndicTrans2). Cached as a singleton."""
-    from src.pipelines.translator import TranslationEngine
-
-    trans_cfg = CFG.get("translation", {})
-    return TranslationEngine(
-        model_id=trans_cfg.get("model_id", "ai4bharat/indictrans2-en-indic-1B"),
-        num_beams=trans_cfg.get("num_beams", 5),
-    )
+    """IndicTrans2 or NLLB-200. Cached as a singleton."""
+    return build_translator(CFG, CAPS)
 
 
 # ===========================================================================
@@ -344,7 +321,7 @@ with tab_transcribe:
                 disabled=True,
             )
         elif not CAPS.live("asr"):
-            st.warning(f"IndicConformer {INSTALL_HINT}", icon="⚠️")
+            st.warning(f"Speech recognition {INSTALL_HINT}", icon="⚠️")
         else:
             if st.button("🚀 Run Transcription", key="btn_transcribe", type="primary"):
                 # ── Stage 1: VAD chunking ──────────────────────────────
@@ -365,7 +342,7 @@ with tab_transcribe:
                     )
 
                 # ── Stage 2: ASR ───────────────────────────────────────
-                with st.status("🎙️ Running IndicConformer ASR…", expanded=True) as status:
+                with st.status("🎙️ Running speech recognition…", expanded=True) as status:
                     st.write("Loading ASR model…")
                     asr = get_asr_engine(asr_lang)
 
@@ -504,7 +481,7 @@ with tab_translate:
     if not has_content:
         st.info("Generate notes or quiz first (Tabs 2-3).", icon="📒")
     elif not CAPS.live("mt") and st.session_state.translated_lang is None:
-        st.warning(f"IndicTrans2 {INSTALL_HINT}", icon="⚠️")
+        st.warning(f"Translation {INSTALL_HINT}", icon="⚠️")
     else:
         flores_code = SUPPORTED_TARGETS.get(target_lang, "hin_Deva")
         st.markdown(f"**Target:** {target_lang} (`{flores_code}`)")
@@ -521,7 +498,7 @@ with tab_translate:
                 with st.status(
                     f"🌐 Translating to {target_lang}…", expanded=True
                 ) as status:
-                    st.write("Loading IndicTrans2…")
+                    st.write("Loading the translation model…")
                     translator = get_translation_engine()
                     t0 = time.perf_counter()
 

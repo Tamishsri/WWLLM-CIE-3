@@ -12,14 +12,23 @@ import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 import uvicorn
 
 from src.api.app import create_app
 from src.config import ROOT, load_config
+from src.pipelines.quiz_schema import normalise_quiz
 from src.services.capabilities import STAGE_REQUIREMENTS, Capabilities
-from src.services.engines import PipelineHub, _distribute, load_eval_predictions
+from src.services.engines import (
+    PipelineHub,
+    _complete_sentences,
+    _distribute,
+    asr_model_id,
+    load_eval_predictions,
+)
 from src.services.files import FileStore
+from src.services.result_cache import ResultCache
 from src.services.sample import SampleLecture
 
 SAMPLE = ROOT / "data/sample/gradient_descent.json"
@@ -37,9 +46,10 @@ def caps(live: bool = False) -> Capabilities:
     return Capabilities(modules=modules, device={"probed": True})
 
 
-def hub(live: bool = False, tmp: Path | None = None) -> PipelineHub:
-    sample = SampleLecture(SAMPLE, tmp or Path(tempfile.mkdtemp()))
-    return PipelineHub(load_config(), caps(live), sample, load_eval_predictions(EVAL_INPUTS), demo_pace=0)
+def hub(live: bool = False, stored: bool = False) -> PipelineHub:
+    sample = SampleLecture(SAMPLE, ROOT / "data/sample")
+    cache = ResultCache(Path(tempfile.mkdtemp()), read_only=[sample.results_dir] if stored else [])
+    return PipelineHub(load_config(), caps(live), sample, cache, load_eval_predictions(EVAL_INPUTS), demo_pace=0)
 
 
 def events(gen):
@@ -52,56 +62,32 @@ def result(evs):
 
 
 class Offline(unittest.TestCase):
+    """No models installed: offline engines, honest errors."""
+
     def setUp(self):
         self.hub = hub()
-        self.record = self.hub.sample.record()
 
-    def test_sample_transcript(self):
-        evs = events(self.hub.transcribe(self.record, self.hub.sample.audio_path, "Hindi"))
-        data = result(evs)
-        self.assertEqual(data["mode"], "sample")
-        self.assertEqual(len(data["segments"]), 4)
-        self.assertTrue(any(e["event"] == "stage" and e.get("chunks") for e in evs))
-
-    def test_sample_notes_stream_reassembles_exactly(self):
-        evs = events(self.hub.notes(self.hub.sample.transcript))
-        text = "".join(e["text"] for e in evs if e["event"] == "token")
-        self.assertEqual(text, self.hub.sample.notes)
-        self.assertEqual(result(evs)["mode"], "sample")
-
-    def test_edited_transcript_uses_the_fallback_not_the_sample(self):
-        data = result(events(self.hub.notes(self.hub.sample.transcript + " Extra sentence here.")))
+    def test_notes_fall_back_to_the_extractive_engine(self):
+        data = result(events(self.hub.notes(RAFT)))
         self.assertEqual(data["mode"], "fallback")
+        self.assertIn("## Overview", data["notes"])
 
-    def test_quiz_is_capped_by_the_sample(self):
-        evs = events(self.hub.quiz(self.hub.sample.transcript, 8))
-        self.assertEqual(len(result(evs)["quiz"]), 5)
-        self.assertTrue(any(e["event"] == "log" for e in evs))
-
-    def test_quiz_count_is_clamped(self):
-        self.assertEqual(len(result(events(self.hub.quiz(self.hub.sample.transcript, 1)))["quiz"]), 3)
-
-    def test_fallback_quiz(self):
+    def test_quiz_falls_back_to_cloze(self):
         data = result(events(self.hub.quiz(RAFT, 3)))
         self.assertEqual(data["mode"], "fallback")
         self.assertEqual(len(data["quiz"]), 3)
 
-    def test_sample_translation_keeps_the_answer_key(self):
-        quiz = self.hub.sample.quiz()
-        data = result(events(self.hub.translate(self.hub.sample.notes, quiz, "Tamil")))
-        self.assertEqual(data["mode"], "sample")
-        for src, out in zip(quiz, data["quiz"]):
-            self.assertEqual(src["answer_index"], out["answer_index"])
-            self.assertEqual(out["correct_answer"], out["options"][out["answer_index"]])
+    def test_fallback_output_is_never_stored_as_model_output(self):
+        events(self.hub.notes(RAFT))
+        self.assertIsNone(self.hub.cache.get("notes", {"transcript": " ".join(RAFT.split())}))
 
-    def test_uncurated_language_is_an_honest_error(self):
-        evs = events(self.hub.translate(self.hub.sample.notes, [], "Telugu"))
-        self.assertEqual(evs[-1]["event"], "error")
-        self.assertIn("IndicTrans2", evs[-1]["message"])
+    def test_quiz_count_is_clamped(self):
+        self.assertEqual(len(result(events(self.hub.quiz(RAFT, 1)))["quiz"]), 3)
 
-    def test_custom_text_cannot_be_translated_offline(self):
+    def test_translation_without_a_model_is_an_honest_error(self):
         evs = events(self.hub.translate("# Hello", [], "Hindi"))
         self.assertEqual(evs[-1]["event"], "error")
+        self.assertIn("translation model", evs[-1]["message"])
 
     def test_empty_inputs_are_errors(self):
         for evs in (
@@ -112,10 +98,9 @@ class Offline(unittest.TestCase):
         ):
             self.assertEqual(evs[-1]["event"], "error")
 
-    def test_known_eval_clip_replays_its_simulated_prediction(self):
+    def test_known_eval_clip_replays_its_stored_prediction(self):
         path = ROOT / "data/ground_truth/audio/lecture_06_backpropagation_math.wav"
-        record = {"name": path.name}
-        data = result(events(self.hub.transcribe(record, path, "Hindi")))
+        data = result(events(self.hub.transcribe({"name": path.name}, path, "Hindi")))
         self.assertEqual(data["mode"], "replay")
         self.assertTrue(data["transcript"])
 
@@ -124,10 +109,12 @@ class Offline(unittest.TestCase):
         self.assertTrue(any(e.get("chunks") for e in evs))
         self.assertEqual(evs[-1]["event"], "error")
 
-    def test_non_wav_needs_the_real_vad(self):
-        evs = events(self.hub.transcribe({"name": "x.mp3"}, Path("x.mp3"), "Hindi"))
+    def test_unreadable_audio_is_an_honest_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / "broken.wav"
+            bad.write_bytes(b"not audio")
+            evs = events(self.hub.transcribe({"name": "broken.wav"}, bad, "Hindi"))
         self.assertEqual(evs[-1]["event"], "error")
-        self.assertIn(".wav", evs[-1]["message"])
 
     def test_distribute_keeps_every_word_in_order(self):
         text = "one two three four five six seven"
@@ -136,11 +123,60 @@ class Offline(unittest.TestCase):
         self.assertEqual(len(parts), 3)
         self.assertEqual(_distribute(text, [(0, 1)]), [text])
 
+    def test_a_sentence_cut_off_by_the_token_limit_is_dropped(self):
+        self.assertEqual(_complete_sentences("One. Two is cut"), "One.")
+        self.assertEqual(_complete_sentences("One.\n\n## Heading\n\nCut off here"), "One.")
+        self.assertEqual(_complete_sentences("Finished.\n"), "Finished.")
+        self.assertEqual(_complete_sentences("- **Bold ending**"), "- **Bold ending**")
+        self.assertEqual(_complete_sentences("## Only a heading"), "## Only a heading")
+        self.assertEqual(_complete_sentences("# Title\n\nBody"), "# Title\n\nBody")
+
     def test_status_shape(self):
         status = self.hub.status()
         self.assertEqual(status["mode"], "demo")
         self.assertEqual(set(status["stages"]), {"vad", "asr", "llm", "mt"})
         self.assertEqual(len(status["languages"]["translate"]), 10)
+
+
+class StoredSample(unittest.TestCase):
+    """The sample lecture works with no models, from real stored outputs."""
+
+    def setUp(self):
+        self.hub = hub(stored=True)
+        self.record = self.hub.sample.record()
+        self.transcript = result(events(self.hub.transcribe(self.record, self.hub.sample.audio_path, "Hindi")))
+
+    def test_transcript_is_stored_model_output(self):
+        self.assertEqual(self.transcript["mode"], "live")
+        self.assertTrue(self.transcript["cached"])
+        self.assertTrue(self.transcript["segments"])
+        self.assertEqual(self.transcript["language"], "Hindi")
+
+    def test_notes_stream_reassembles_exactly(self):
+        evs = events(self.hub.notes(self.transcript["transcript"]))
+        data = result(evs)
+        self.assertEqual("".join(e["text"] for e in evs if e["event"] == "token"), data["notes"])
+        self.assertTrue(data["cached"])
+
+    def test_quiz_and_every_translation_are_stored(self):
+        notes = result(events(self.hub.notes(self.transcript["transcript"])))["notes"]
+        quiz = result(events(self.hub.quiz(self.transcript["transcript"], 5)))["quiz"]
+        self.assertGreaterEqual(len(quiz), 3)
+        self.assertEqual(len(self.hub.sample.translated_languages), 10)
+        for language in self.hub.sample.translated_languages:
+            data = result(events(self.hub.translate(notes, quiz, language)))
+            self.assertTrue(data["cached"], language)
+            self.assertTrue(data["notes"], language)
+            for src, out in zip(quiz, data["quiz"]):
+                self.assertEqual(src["answer_index"], out["answer_index"])
+
+    def test_edited_transcript_does_not_get_the_stored_notes(self):
+        data = result(events(self.hub.notes(self.transcript["transcript"] + " Extra sentence here.")))
+        self.assertEqual(data["mode"], "fallback")
+
+    def test_fresh_bypasses_the_store(self):
+        data = result(events(self.hub.notes(self.transcript["transcript"], fresh=True)))
+        self.assertEqual(data["mode"], "fallback")
 
 
 class FakeAudio:
@@ -150,6 +186,7 @@ class FakeAudio:
 
 class FakeASR:
     batch_size = 2
+    model_id = "fake/asr"
 
     def transcribe(self, chunks):
         return [f"text {c}" for c in chunks]
@@ -161,10 +198,15 @@ class FakeLLM:
     def stream_notes(self, transcript):
         yield from ["# Title", "\n\n", "Body"]
 
-    def generate_quiz(self, transcript, num_questions):
-        return [
-            {"question": "Q", "options": ["a", "b"], "answer_index": 1, "correct_answer": "b", "explanation": ""}
-        ] * num_questions
+    def stream_quiz(self, transcript, num_questions):
+        question = {"question": "Q", "options": ["a", "b"], "answer_index": 1, "correct_answer": "b", "explanation": ""}
+        yield json.dumps([question] * num_questions)
+
+    def count_questions(self, raw):
+        return raw.count('"question"')
+
+    def parse_quiz(self, raw):
+        return normalise_quiz(json.loads(raw))
 
 
 class FakeMT:
@@ -177,55 +219,112 @@ class FakeMT:
         return [{**q, "question": f"[{target_lang}] {q['question']}"} for q in quiz]
 
 
-class LiveBranches(unittest.TestCase):
-    """The real-model paths, with engines swapped for fakes."""
+class Live(unittest.TestCase):
+    """Real-model branches, with the engines swapped for fakes."""
 
     def setUp(self):
         self.hub = hub(live=True)
         self.hub._audio = FakeAudio()
-        self.hub._asr = FakeASR()
-        self.hub._asr_model_id = self.hub.asr_model_id("Hindi")
-        self.hub._llm = FakeLLM()
-        self.hub._mt = FakeMT()
+        self.audio = self.hub.sample.audio_path
+
+    def use(self, key, engine):
+        self.hub._models = {key: engine}
 
     def test_transcribe_reports_per_batch_and_timestamps_segments(self):
-        evs = events(self.hub.transcribe({"name": "a.wav"}, Path("a.wav"), "Hindi"))
+        self.use("asr:Hindi", FakeASR())
+        evs = events(self.hub.transcribe({"name": "a.wav"}, self.audio, "Hindi"))
         data = result(evs)
-        self.assertEqual(data["mode"], "live")
+        self.assertEqual((data["mode"], data["engine"]), ("live", "fake/asr"))
         self.assertEqual(data["transcript"], "text c1 text c2 text c3")
         self.assertEqual(data["segments"][1], {"start": 2.0, "end": 3.0, "text": "text c2"})
         self.assertEqual([e["value"] for e in evs if e["event"] == "progress"], [0.6667, 1.0])
 
-    def test_notes_stream_tokens(self):
+    def test_a_second_run_replays_and_fresh_reruns(self):
+        self.use("asr:Hindi", FakeASR())
+        events(self.hub.transcribe({"name": "a.wav"}, self.audio, "Hindi"))
+        self.assertTrue(result(events(self.hub.transcribe({"name": "a.wav"}, self.audio, "Hindi")))["cached"])
+        self.assertNotIn("cached", result(events(self.hub.transcribe({"name": "a.wav"}, self.audio, "Hindi", fresh=True))))
+
+    def test_notes_stream_and_are_stored(self):
+        self.use("llm", FakeLLM())
         evs = events(self.hub.notes("transcript"))
         self.assertEqual([e["text"] for e in evs if e["event"] == "token"], ["# Title", "\n\n", "Body"])
-        data = result(evs)
-        self.assertEqual((data["notes"], data["mode"]), ("# Title\n\nBody", "live"))
-
-    def test_live_model_beats_the_curated_sample(self):
-        data = result(events(self.hub.notes(self.hub.sample.transcript)))
-        self.assertEqual(data["mode"], "live")
+        self.assertEqual(result(evs)["notes"], "# Title\n\nBody")
+        self.assertTrue(result(events(self.hub.notes("transcript")))["cached"])
 
     def test_quiz(self):
-        self.assertEqual(len(result(events(self.hub.quiz("transcript", 4)))["quiz"]), 4)
+        self.use("llm", FakeLLM())
+        evs = events(self.hub.quiz("transcript", 4))
+        self.assertEqual(len(result(evs)["quiz"]), 4)
+        self.assertTrue(any(e["event"] == "progress" for e in evs))
 
-    def test_empty_llm_quiz_is_a_retryable_error(self):
-        self.hub._llm.generate_quiz = lambda *a, **k: []
-        self.assertEqual(events(self.hub.quiz("transcript", 4))[-1]["event"], "error")
+    def test_invalid_llm_quiz_falls_back_instead_of_failing(self):
+        llm = FakeLLM()
+        llm.parse_quiz = lambda raw: []
+        self.use("llm", llm)
+        data = result(events(self.hub.quiz(RAFT, 3)))
+        self.assertEqual(data["mode"], "fallback")
 
     def test_translate_preserves_the_key(self):
+        self.use("mt", FakeMT())
         quiz = [{"question": "Q", "options": ["a", "b"], "answer_index": 1, "correct_answer": "b"}]
         data = result(events(self.hub.translate("notes", quiz, "Hindi")))
         self.assertEqual(data["notes"], "[hin_Deva] notes")
         self.assertEqual(data["quiz"][0]["answer_index"], 1)
         self.assertEqual(data["mode"], "live")
 
+    def test_only_one_large_model_stays_loaded(self):
+        self.use("llm", FakeLLM())
+        self.hub._model("mt", FakeMT)
+        self.assertEqual(list(self.hub._models), ["mt"])
+
+    def test_a_model_that_cannot_load_degrades_cleanly(self):
+        def boom():
+            raise OSError("not downloaded")
+
+        self.hub.cfg = {**self.hub.cfg, "llm": {"model_id": "missing/model"}}
+        self.assertIsNone(self.hub._model("llm", boom))
+        with patch("src.services.engines.build_llm", side_effect=OSError("offline")):
+            notes = result(events(self.hub.notes(RAFT)))
+            quiz = result(events(self.hub.quiz(RAFT, 3)))
+        self.assertEqual((notes["mode"], quiz["mode"]), ("fallback", "fallback"))
+        with patch("src.services.engines.build_translator", side_effect=OSError("offline")):
+            self.assertEqual(events(self.hub.translate("notes", [], "Hindi"))[-1]["event"], "error")
+
+    def test_a_failed_vad_falls_back_to_the_energy_vad(self):
+        class Broken:
+            def process_with_spans(self, path):
+                raise RuntimeError("codec")
+
+        self.hub._audio = Broken()
+        evs = events(self.hub.transcribe({"name": "mine.wav"}, self.audio, "Hindi"))
+        self.assertTrue(any(e.get("chunks") for e in evs))
+
     def test_each_language_gets_its_own_checkpoint(self):
-        self.assertIn("_hi_", self.hub.asr_model_id("Hindi"))
-        self.assertIn("_ta_", self.hub.asr_model_id("Tamil"))
-        self.assertIn("_kn_", self.hub.asr_model_id("Kannada"))
-        self.hub.cfg = {"asr": {"models": {"Tamil": "/local/ta.nemo"}}}
-        self.assertEqual(self.hub.asr_model_id("Tamil"), "/local/ta.nemo")
+        self.assertIn("_hi_", asr_model_id(self.hub.cfg, "Hindi"))
+        self.assertIn("_ta_", asr_model_id(self.hub.cfg, "Tamil"))
+        self.assertEqual(asr_model_id({"asr": {"models": {"Tamil": "/local/ta.nemo"}}}, "Tamil"), "/local/ta.nemo")
+
+
+class Cache(unittest.TestCase):
+    def test_round_trip_and_read_only_layer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = ResultCache(Path(tmp) / "a")
+            first.put("notes", {"x": 1}, {"notes": "hello", "cached": True})
+            second = ResultCache(Path(tmp) / "b", read_only=[Path(tmp) / "a"])
+            stored = second.get("notes", {"x": 1})
+            self.assertEqual(stored["notes"], "hello")
+            self.assertTrue(stored["cached"])
+            self.assertIn("created", stored)
+            self.assertIsNone(second.get("notes", {"x": 2}))
+            self.assertIsNone(second.get("quiz", {"x": 1}))
+
+    def test_a_corrupt_entry_is_a_miss(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = ResultCache(Path(tmp))
+            cache.put("notes", {"x": 1}, {"notes": "hello"})
+            next(Path(tmp).glob("*.json")).write_text("{broken", encoding="utf-8")
+            self.assertIsNone(cache.get("notes", {"x": 1}))
 
 
 class Store(unittest.TestCase):
@@ -314,7 +413,7 @@ class Api(unittest.TestCase):
         for suffix in (".wav", ".json"):
             self.addCleanup((ROOT / "data/uploads" / f"{record['id']}{suffix}").unlink, missing_ok=True)
         self.assertEqual(record["name"], "talk.wav")
-        self.assertAlmostEqual(record["duration"], 2.5, places=1)
+        self.assertAlmostEqual(record["duration"], 14.08, places=1)
         self.assertEqual(self.get(f"/api/files/{record['id']}")[0], 200)
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             self.upload("evil.exe", b"MZ")
@@ -333,10 +432,11 @@ class Api(unittest.TestCase):
         with urllib.request.urlopen(req) as r:
             self.assertEqual(json.loads(r.read().splitlines()[-1])["event"], "error")
 
-    def test_benchmark_is_labelled_simulated(self):
+    def test_benchmark_is_a_real_measurement(self):
         report = json.loads(self.get("/api/benchmark")[1])
-        self.assertTrue(report["simulated"])
-        self.assertEqual(report["summary"]["failures"], 11)
+        self.assertEqual(report["summary"]["samples"], 40)
+        self.assertEqual(report["summary"]["evaluated"], 40)
+        self.assertTrue(report["measurement"]["asr_models"])
 
 
 if __name__ == "__main__":

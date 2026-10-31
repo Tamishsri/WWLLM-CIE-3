@@ -1,0 +1,68 @@
+{
+ "quiz": [
+  {
+   "question": "What is the main goal when we perform gradient descent in machine learning?",
+   "options": [
+    "To minimize the function",
+    "To maximize the function",
+    "To find the minimum value of the function",
+    "To find the maximum value of the function"
+   ],
+   "answer_index": 0,
+   "correct_answer": "To minimize the function",
+   "explanation": ""
+  },
+  {
+   "question": "What is the term used to describe the step size in gradient descent?",
+   "options": [
+    "Gradient descent",
+    "Learning rate",
+    "Gradient",
+    "Derivative"
+   ],
+   "answer_index": 1,
+   "correct_answer": "Learning rate",
+   "explanation": ""
+  },
+  {
+   "question": "Which of the following is not a type of dataset used in gradient descent?",
+   "options": [
+    "Full dataset",
+    "Sample dataset",
+    "Mini-batch dataset",
+    "All of the above"
+   ],
+   "answer_index": 2,
+   "correct_answer": "Mini-batch dataset",
+   "explanation": ""
+  },
+  {
+   "question": "In which type of dataset is the mini-batch method commonly used in deep learning?",
+   "options": [
+    "Full dataset",
+    "Sample dataset",
+    "Mini-batch dataset",
+    "All of the above"
+   ],
+   "answer_index": 2,
+   "correct_answer": "Mini-batch dataset",
+   "explanation": "The mini-batch method is commonly used in deep learning because it balances the trade-off between computational efficiency and model accuracy."
+  },
+  {
+   "question": "What is the purpose of using mini-batch in gradient descent?",
+   "options": [
+    "To make the algorithm faster",
+    "To make the algorithm slower",
+    "To make the algorithm more accurate",
+    "To make the algorithm more efficient"
+   ],
+   "answer_index": 2,
+   "correct_answer": "To make the algorithm more accurate",
+   "explanation": "Mini-batch is used to balance the trade-off between computational efficiency and model accuracy. It is more accurate than full-batch but less accurate than mini-batch."
+  }
+ ],
+ "engine": "bharatgenai/Param-1-2.9B-Instruct",
+ "mode": "live",
+ "seconds": 493.36,
+ "created": 1793419220.36517
+}

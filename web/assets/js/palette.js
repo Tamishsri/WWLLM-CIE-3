@@ -90,6 +90,10 @@ function onKey(e) {
     const step = e.key === "ArrowDown" ? 1 : -1;
     selected = (selected + step + items.length) % items.length;
     paint();
+  } else if (e.key === "Escape") {
+    // A search field clears itself on Esc, which would leave the palette open.
+    e.preventDefault();
+    dialog().close();
   } else if (e.key === "Enter") {
     e.preventDefault();
     activate(selected);

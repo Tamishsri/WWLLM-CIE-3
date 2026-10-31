@@ -36,8 +36,19 @@ export function lineKind(line) {
   return { kind: "p", text: t };
 }
 
+/** Models pick their own heading depth; the UI expects a `#` title and `##` sections. */
+export function levelHeadings(md) {
+  const depths = [...String(md || "").matchAll(/^ {0,3}(#{1,6})\s/gm)].map((m) => m[1].length);
+  if (!depths.length) return String(md || "");
+  const top = Math.min(...depths);
+  const titled = depths.filter((d) => d === top).length === 1;
+  const shift = top - (titled ? 1 : 2);
+  if (shift <= 0) return String(md);
+  return String(md).replace(/^( {0,3})(#{1,6})(?=\s)/gm, (_, pad, hashes) => pad + "#".repeat(Math.max(1, hashes.length - shift)));
+}
+
 export function render(md) {
-  const lines = String(md || "").replace(/\r\n?/g, "\n").split("\n");
+  const lines = levelHeadings(md).replace(/\r\n?/g, "\n").split("\n");
   const out = [];
   const toc = [];
   const ids = new Set();

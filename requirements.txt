@@ -1,45 +1,33 @@
 # ============================================================================
 # WWLLM — Multilingual Lecture-to-Notes & Quiz Generator
-# Python 3.10+  |  CUDA 11.8+ recommended
+# Python 3.10+  |  runs on CPU; a CUDA GPU is much faster
 # ============================================================================
+# Everything the real pipeline needs. Models download on first use.
+# requirements-web.txt lists only what the studio needs offline.
 
 # ── Core ML Frameworks ──────────────────────────────────────────────────────
 torch>=2.1.0
 torchaudio>=2.1.0
-transformers>=4.40.0
+transformers>=4.46.0
 accelerate>=0.30.0
 sentencepiece>=0.2.0
 protobuf>=4.25.0
 
-# ── Quantisation ────────────────────────────────────────────────────────────
-bitsandbytes>=0.43.0
-
-# ── NVIDIA NeMo (AI4Bharat IndicConformer) ──────────────────────────────────
-# NOTE: Install AI4Bharat's NeMo fork for IndicConformer support:
-#   git clone --branch nemo-v2 https://github.com/AI4Bharat/NeMo.git
-#   cd NeMo && bash reinstall.sh
-nemo_toolkit[asr]>=1.23.0
-
-# ── AI4Bharat IndicTrans2 Toolkit ───────────────────────────────────────────
-# pip install git+https://github.com/VarunGumma/IndicTransToolkit.git
-IndicTransToolkit>=0.1.0
-
 # ── Voice Activity Detection ───────────────────────────────────────────────
 silero-vad>=5.1
 
-# ── Audio / Video Processing ───────────────────────────────────────────────
-# soundfile decodes audio when torchaudio lacks its optional TorchCodec backend
+# ── Audio ───────────────────────────────────────────────────────────────────
+# soundfile decodes audio when torchaudio lacks its optional TorchCodec backend.
+# Video and .m4a files also need the ffmpeg program on PATH.
 soundfile>=0.12.1
-pydub>=0.25.1
-ffmpeg-python>=0.2.0
 
 # ── Evaluation Metrics ─────────────────────────────────────────────────────
 jiwer>=3.0.0
-bert-score>=0.3.13
 rouge-score>=0.1.2
+bert-score>=0.3.13
 
 # ── Frontend ────────────────────────────────────────────────────────────────
-# Web studio (server.py). requirements-web.txt lists only what it needs offline.
+# Web studio (server.py)
 starlette>=0.38.0
 uvicorn>=0.30.0
 python-multipart>=0.0.9
@@ -52,3 +40,10 @@ numpy>=1.26.0
 pyyaml>=6.0
 loguru>=0.7.0
 tqdm>=4.66.0
+
+# ── Optional: AI4Bharat models ──────────────────────────────────────────────
+# Used automatically once installed and your Hugging Face account has access:
+# request it on each model page, then run `huggingface-cli login`.
+#   IndicConformer:  pip install "nemo_toolkit[asr]>=1.23.0"
+#   IndicTrans2:     pip install git+https://github.com/VarunGumma/IndicTransToolkit.git
+# 8-bit Param-1 on a GPU:  pip install "bitsandbytes>=0.43.0"
